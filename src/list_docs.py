@@ -1,30 +1,39 @@
+# src/list_docs.py
+
 from googleapiclient.discovery import build
 from src.auth import get_credentials
+from src.logger import logger
+
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def list_google_docs():
+def list_drive_documents():
+    """
+    Lists all Google Docs and DOCX files in Google Drive.
+    Folder location does NOT matter.
+    """
+    logger.info("Fetching Google Docs and DOCX files from Drive")
+
     creds = get_credentials()
     service = build("drive", "v3", credentials=creds)
 
+    query = (
+        f"(mimeType='{GOOGLE_DOC_MIME}' "
+        f"or mimeType='{DOCX_MIME}') "
+        f"and trashed=false"
+    )
+
     results = service.files().list(
-        q="mimeType='application/vnd.google-apps.document' and trashed=false",
-        fields="files(id, name)",
-        pageSize=50
+        q=query,
+        fields="files(id, name, mimeType)",
+        pageSize=100,
     ).execute()
 
     files = results.get("files", [])
+    logger.info(f"Found {len(files)} documents")
 
-    if not files:
-        print("No Google Docs found.")
-        return []
-
-    print("Google Docs in your Drive:\n")
     for f in files:
-        print(f"{f['name']}  ->  {f['id']}")
+        logger.debug(f"{f['name']} | {f['mimeType']} | {f['id']}")
 
- 
     return files
-
-
-if __name__ == "__main__":
-    list_google_docs()

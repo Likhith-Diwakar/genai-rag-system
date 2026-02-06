@@ -1,56 +1,81 @@
-from src.list_docs import list_google_docs
+# src/main.py
+
+import os
+import tempfile
+
+from src.list_docs import list_drive_documents
 from src.extract_text import extract_doc_text
+from src.extract_docx import extract_docx_text
+from src.download_file import download_drive_file
 from src.chunker import chunk_text
 from src.embeddings import embed_texts
 from src.vector_store import VectorStore
 from src.tracker_db import TrackerDB
+from src.logger import logger
+
+
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def main():
-    print("Starting Drive -> Vector sync")
+    logger.info("Starting Drive → Vector sync")
 
-    # Initialize vector store and tracker
     store = VectorStore()
     tracker = TrackerDB()
 
-    # Fetch Google Docs from Drive
-    docs = list_google_docs()
+    docs = list_drive_documents()
     current_drive_ids = set()
 
     if not docs:
-        print("No Google Docs found in Drive.")
+        logger.warning("No documents found in Drive")
         return
 
     for doc in docs:
         file_id = doc["id"]
         file_name = doc["name"]
+        mime_type = doc["mimeType"]
+
         current_drive_ids.add(file_id)
 
-        # Skip already ingested files
         if tracker.is_ingested(file_id):
-            print(f"Skipping already ingested: {file_name}")
+            logger.info(f"Skipping already ingested: {file_name}")
             continue
 
-        print(f"Ingesting: {file_name}")
+        logger.info(f"Ingesting: {file_name}")
 
-        # 1. Extract text
-        text = extract_doc_text(file_id)
+        # ---------- TEXT EXTRACTION ----------
+        try:
+            if mime_type == GOOGLE_DOC_MIME:
+                text = extract_doc_text(file_id)
 
-        if not text or not text.strip():
-            print(f"Empty document, skipping: {file_name}")
+            elif mime_type == DOCX_MIME:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+                    download_drive_file(file_id, tmp.name)
+                    text = extract_docx_text(tmp.name)
+                os.unlink(tmp.name)
+
+            else:
+                logger.warning(f"Unsupported file type: {file_name}")
+                continue
+
+        except Exception as e:
+            logger.exception(f"Failed to extract text from {file_name}: {e}")
             continue
 
-        # 2. Chunk text
+        if not text.strip():
+            logger.warning(f"Empty document, skipping: {file_name}")
+            continue
+
+        # ---------- CHUNKING ----------
         chunks = chunk_text(text)
-
         if not chunks:
-            print(f"No chunks created, skipping: {file_name}")
+            logger.warning(f"No chunks created: {file_name}")
             continue
 
-        # 3. Embed chunks
+        # ---------- EMBEDDING ----------
         embeddings = embed_texts(chunks)
 
-        # 4. Store in vector DB
         ids = [f"{file_id}_{i}" for i in range(len(chunks))]
         metadatas = [
             {
@@ -68,20 +93,19 @@ def main():
             ids=ids,
         )
 
-        # 5. Mark file as ingested
         tracker.mark_ingested(file_id, file_name)
-        print(f"Done: {file_name}")
+        logger.info(f"Completed ingestion: {file_name}")
 
-    # Handle deletions (files removed from Drive)
+    # ---------- HANDLE DELETED FILES ----------
     tracked_ids = tracker.get_all_file_ids()
     deleted_ids = tracked_ids - current_drive_ids
 
     for file_id in deleted_ids:
-        print(f"Removing deleted file: {file_id}")
+        logger.warning(f"Removing deleted file vectors: {file_id}")
         store.delete_by_file_id(file_id)
         tracker.remove(file_id)
 
-    print("Sync complete")
+    logger.info("Drive sync complete")
 
 
 if __name__ == "__main__":
