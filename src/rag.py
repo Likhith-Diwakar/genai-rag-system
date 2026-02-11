@@ -7,10 +7,11 @@ from src.query import query_vector_store
 from src.logger import logger
 
 # ------------------------------------------------------------------
-# Ollama HTTP configuration (STABLE)
+# Ollama HTTP configuration (PRIMARY + FALLBACK)
 # ------------------------------------------------------------------
 OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5:3b-instruct"
+PRIMARY_MODEL = "qwen2.5:3b-instruct"
+FALLBACK_MODEL = "tinyllama"
 TIMEOUT = 120
 
 
@@ -27,13 +28,13 @@ def clean_output(text: str) -> str:
 
 
 # ------------------------------------------------------------------
-# Ollama HTTP call
+# Ollama HTTP call (with fallback)
 # ------------------------------------------------------------------
-def call_ollama(prompt: str) -> str:
-    logger.info(f"Calling Ollama via HTTP | model={OLLAMA_MODEL}")
+def _run_ollama(model: str, prompt: str) -> str:
+    logger.info(f"Calling Ollama via HTTP | model={model}")
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model,
         "prompt": prompt,
         "stream": False,
     }
@@ -45,22 +46,36 @@ def call_ollama(prompt: str) -> str:
             timeout=TIMEOUT,
         )
     except Exception:
-        logger.exception("Ollama HTTP request failed")
-        return "I do not know based on the provided documents."
+        logger.exception(f"Ollama HTTP request failed | model={model}")
+        return ""
 
     if resp.status_code != 200:
-        logger.error(f"Ollama HTTP error: {resp.status_code}")
-        return "I do not know based on the provided documents."
+        logger.error(f"Ollama HTTP error | model={model} | status={resp.status_code}")
+        return ""
 
     data = resp.json()
     answer = clean_output(data.get("response", ""))
 
     if not answer:
-        logger.warning("Ollama returned empty response")
-        return "I do not know based on the provided documents."
+        logger.warning(f"Ollama returned empty response | model={model}")
+        return ""
 
-    logger.info("Ollama response generated successfully")
+    logger.info(f"Ollama response generated successfully | model={model}")
     return answer
+
+
+def call_ollama(prompt: str) -> str:
+    answer = _run_ollama(PRIMARY_MODEL, prompt)
+    if answer:
+        return answer
+
+    logger.warning("Primary model failed, falling back to backup model")
+    answer = _run_ollama(FALLBACK_MODEL, prompt)
+    if answer:
+        return answer
+
+    logger.error("All Ollama models failed")
+    return "I do not know based on the provided documents."
 
 
 # ------------------------------------------------------------------
@@ -80,13 +95,16 @@ def keyword_overlap_score(query_terms: set, text: str) -> int:
 
 
 # ------------------------------------------------------------------
-# SECTION-AWARE CONTEXT EXTRACTION (CORE FIX)
+# SECTION-AWARE CONTEXT EXTRACTION (FIXED)
 # ------------------------------------------------------------------
-def extract_relevant_section(scored_chunks):
+def extract_relevant_sections(scored_chunks, max_sections: int = 2):
     """
-    Groups chunks by detected section headers and returns
-    ONLY the most relevant section.
+    Groups chunks by detected section headers.
+    Supports:
+    - Short headers (e.g., "Preamble")
+    - Long question headers (e.g., "What happens if ...?")
     """
+
     section_scores = defaultdict(int)
     section_chunks = defaultdict(list)
 
@@ -97,20 +115,35 @@ def extract_relevant_section(scored_chunks):
 
         for line in lines:
             line = line.strip()
-            # Heuristic for section headers
+
             if (
                 len(line) >= 5
-                and len(line.split()) <= 6
                 and line[0].isupper()
+                and (
+                    line.endswith("?")           # FIX: allow question headers
+                    or len(line.split()) <= 10   # keep short-title heuristic
+                )
             ):
                 current_section = line
 
         section_scores[current_section] += score
         section_chunks[current_section].append(doc)
 
-    best_section = max(section_scores, key=section_scores.get)
+    ranked_sections = sorted(
+        section_scores.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
 
-    return best_section, section_chunks[best_section]
+    selected_sections = []
+    for section, score in ranked_sections:
+        if score <= 0:
+            continue
+        selected_sections.append((section, section_chunks[section]))
+        if len(selected_sections) >= max_sections:
+            break
+
+    return selected_sections
 
 
 # ------------------------------------------------------------------
@@ -126,9 +159,14 @@ def generate_answer(query: str, k: int = 5):
         logger.warning("No chunks retrieved from vector store")
         return "I do not know based on the provided documents.", []
 
+    logger.info(
+        "Semantic retrieval completed. "
+        "Keyword scoring will be used ONLY for dominant document selection."
+    )
+
     # 2️⃣ Keyword extraction (dominance only)
     query_terms = extract_query_terms(query)
-    logger.info(f"Extracted query terms: {query_terms}")
+    logger.info(f"Extracted query terms (dominance only): {query_terms}")
 
     # 3️⃣ Score chunks per document
     doc_scores = defaultdict(int)
@@ -141,7 +179,7 @@ def generate_answer(query: str, k: int = 5):
         doc_scores[file_id] += score
         doc_chunks[file_id].append((doc, meta, score))
 
-    # 4️⃣ Select dominant document
+    # 4️⃣ Dominant document selection
     dominant_file_id = max(doc_scores, key=doc_scores.get)
 
     if doc_scores[dominant_file_id] == 0:
@@ -155,16 +193,21 @@ def generate_answer(query: str, k: int = 5):
         f"Selected dominant document: {dominant_file_name} ({dominant_file_id})"
     )
 
-    # 5️⃣ SECTION-AWARE CONTEXT (🔥 THIS IS THE FIX)
-    section_title, section_docs = extract_relevant_section(dominant_chunks)
+    # 5️⃣ Section-aware context
+    selected_sections = extract_relevant_sections(dominant_chunks)
 
-    if not section_docs:
-        logger.warning("No relevant section extracted")
+    if not selected_sections:
+        logger.warning("No relevant sections extracted")
         return "I do not know based on the provided documents.", []
 
-    context = section_title + "\n\n" + "\n\n".join(section_docs)
+    context_blocks = []
+    for section_title, section_docs in selected_sections:
+        block = section_title + "\n\n" + "\n\n".join(section_docs)
+        context_blocks.append(block)
 
-    # 6️⃣ Structured, generic prompt (NO hard-coding)
+    context = "\n\n".join(context_blocks)
+
+    # 6️⃣ Grounded prompt
     prompt = f"""
 You are a factual assistant answering questions using structured documents.
 
@@ -176,7 +219,7 @@ Instructions:
 - Present the answer as labeled points or bullet-style lines.
 - Do NOT summarize or generalize.
 - Do NOT add new information.
-- Do NOT merge content from different sections.
+- Do NOT merge content from different documents.
 
 If the answer cannot be derived, reply exactly:
 "I do not know based on the provided documents."
@@ -206,7 +249,7 @@ Answer:
 # Local test
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    q = "What are the rules for Robowars competition?"
+    q = "What happens if an athlete or participant fails to respect these policies?"
     ans, srcs = generate_answer(q)
 
     print("\nANSWER:\n", ans)

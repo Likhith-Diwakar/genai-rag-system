@@ -1,4 +1,3 @@
-
 # src/main.py
 
 import os
@@ -7,8 +6,9 @@ import tempfile
 from src.list_docs import list_drive_documents
 from src.extract_text import extract_doc_text
 from src.extract_docx import extract_docx_text
+from src.extract_pdf import extract_pdf_text
 from src.download_file import download_drive_file
-from src.chunker import chunk_text
+from src.chunking_router import chunk_by_file_type
 from src.embeddings import embed_texts
 from src.vector_store import VectorStore
 from src.tracker_db import TrackerDB
@@ -17,6 +17,7 @@ from src.logger import logger
 
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+PDF_MIME = "application/pdf"
 
 
 def main():
@@ -56,6 +57,12 @@ def main():
                     text = extract_docx_text(tmp.name)
                 os.unlink(tmp.name)
 
+            elif mime_type == PDF_MIME:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    download_drive_file(file_id, tmp.name)
+                    text = extract_pdf_text(tmp.name)
+                os.unlink(tmp.name)
+
             else:
                 logger.warning(f"Unsupported file type: {file_name}")
                 continue
@@ -68,8 +75,9 @@ def main():
             logger.warning(f"Empty document, skipping: {file_name}")
             continue
 
-        # ---------- CHUNKING ----------
-        chunks = chunk_text(text)
+        # ---------- CHUNKING (FORMAT-AWARE) ----------
+        chunks = chunk_by_file_type(text, mime_type)
+
         if not chunks:
             logger.warning(f"No chunks created: {file_name}")
             continue
