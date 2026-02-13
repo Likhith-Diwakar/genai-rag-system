@@ -198,38 +198,38 @@ The next phase focuses on:
 ```mermaid
 flowchart TB
 
-subgraph Ingestion Pipeline
-    A[Google Drive / PDF / DOCX / CSV]
-    B[Document Type Detection]
-    C[Format-Aware Chunking]
-    D[Metadata Tagging]
-    E[BGE-M3 Embedding Generator]
+subgraph Ingestion_Pipeline
+    A["Google Drive / PDF / DOCX / CSV"]
+    B["Document Type Detection"]
+    C["Format-Aware Chunking"]
+    D["Metadata Tagging"]
+    E["BGE-M3 Embedding Generator"]
     F[(ChromaDB Vector Store)]
     
     A --> B --> C --> D --> E --> F
 end
 
-subgraph Query Processing
-    U[Streamlit UI]
-    Q[Query Controller]
-    I{Numeric Intent?}
-    QE[BGE-M3 Query Embedding]
-    VS[Vector Search Top-K]
-    DD[Dominant Document Selection]
-    SC[Section-aware Context]
+subgraph Query_Processing
+    U["Streamlit UI"]
+    Q["Query Controller"]
+    I{"Numeric Intent?"}
+    QE["BGE-M3 Query Embedding"]
+    VS["Vector Search Top-K"]
+    DD["Dominant Document Selection"]
+    SC["Section-aware Context"]
     
     U --> Q --> I
     QE --> F
     F --> VS --> DD --> SC
 end
 
-subgraph Hybrid Reasoning
-    S[Structured Engine (Pandas)]
-    LLM1[Qwen 2.5 (Primary)]
-    LLM2[TinyLlama (Fallback)]
+subgraph Hybrid_Reasoning
+    S["Structured Engine (Pandas)"]
+    LLM1["Qwen 2.5 - Primary"]
+    LLM2["TinyLlama - Fallback"]
 end
 
-I -- Yes (CSV + Numeric) --> S
+I -- Yes --> S
 S --> U
 
 I -- No --> QE
@@ -238,4 +238,5 @@ LLM1 --> U
 LLM1 -- On Failure --> LLM2
 LLM2 --> U
 ```
+
 
