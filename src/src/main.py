@@ -7,9 +7,8 @@ from src.list_docs import list_drive_documents
 from src.extract_text import extract_doc_text
 from src.extract_docx import extract_docx_text
 from src.extract_pdf import extract_pdf_text
-from src.extract_csv import extract_csv_text
 from src.download_file import download_drive_file
-from src.chunker import chunk_text
+from src.chunking_router import chunk_by_file_type
 from src.embeddings import embed_texts
 from src.vector_store import VectorStore
 from src.tracker_db import TrackerDB
@@ -19,7 +18,6 @@ from src.logger import logger
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MIME = "application/pdf"
-CSV_MIME = "text/csv"
 
 
 def main():
@@ -48,8 +46,8 @@ def main():
 
         logger.info(f"Ingesting: {file_name}")
 
+        # ---------- TEXT EXTRACTION ----------
         try:
-            # ---------------- TEXT EXTRACTION ----------------
             if mime_type == GOOGLE_DOC_MIME:
                 text = extract_doc_text(file_id)
 
@@ -65,9 +63,6 @@ def main():
                     text = extract_pdf_text(tmp.name)
                 os.unlink(tmp.name)
 
-            elif mime_type == CSV_MIME:
-                text = extract_csv_text(file_id)
-
             else:
                 logger.warning(f"Unsupported file type: {file_name}")
                 continue
@@ -80,14 +75,14 @@ def main():
             logger.warning(f"Empty document, skipping: {file_name}")
             continue
 
-        # ---------------- FORMAT-AWARE CHUNKING ----------------
-        chunks = chunk_text(text, mime_type=mime_type)
+        # ---------- CHUNKING (FORMAT-AWARE) ----------
+        chunks = chunk_by_file_type(text, mime_type)
 
         if not chunks:
             logger.warning(f"No chunks created: {file_name}")
             continue
 
-        # ---------------- EMBEDDING ----------------
+        # ---------- EMBEDDING ----------
         embeddings = embed_texts(chunks)
 
         ids = [f"{file_id}_{i}" for i in range(len(chunks))]
@@ -109,6 +104,15 @@ def main():
 
         tracker.mark_ingested(file_id, file_name)
         logger.info(f"Completed ingestion: {file_name}")
+
+    # ---------- HANDLE DELETED FILES ----------
+    tracked_ids = tracker.get_all_file_ids()
+    deleted_ids = tracked_ids - current_drive_ids
+
+    for file_id in deleted_ids:
+        logger.warning(f"Removing deleted file vectors: {file_id}")
+        store.delete_by_file_id(file_id)
+        tracker.remove(file_id)
 
     logger.info("Drive sync complete")
 

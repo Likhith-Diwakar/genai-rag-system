@@ -2,14 +2,9 @@
 
 import requests
 import re
-import tempfile
 from collections import defaultdict
-
 from src.query import query_vector_store
 from src.logger import logger
-from src.csv_reasoner import answer_csv_query
-from src.download_file import download_drive_file
-
 
 # ------------------------------------------------------------------
 # Ollama HTTP configuration (PRIMARY + FALLBACK)
@@ -17,7 +12,7 @@ from src.download_file import download_drive_file
 OLLAMA_URL = "http://localhost:11434/api/generate"
 PRIMARY_MODEL = "qwen2.5:3b-instruct"
 FALLBACK_MODEL = "tinyllama"
-TIMEOUT = 180  # increased for stability
+TIMEOUT = 120
 
 
 # ------------------------------------------------------------------
@@ -50,23 +45,23 @@ def _run_ollama(model: str, prompt: str) -> str:
             json=payload,
             timeout=TIMEOUT,
         )
-    except requests.exceptions.Timeout:
-        logger.error(f"Ollama timeout | model={model}")
-        return ""
     except Exception:
         logger.exception(f"Ollama HTTP request failed | model={model}")
         return ""
 
     if resp.status_code != 200:
-        logger.error(f"Ollama HTTP error {resp.status_code} | model={model}")
+        logger.error(f"Ollama HTTP error | model={model} | status={resp.status_code}")
         return ""
 
-    try:
-        data = resp.json()
-        return clean_output(data.get("response", ""))
-    except Exception:
-        logger.exception("Failed to parse Ollama response")
+    data = resp.json()
+    answer = clean_output(data.get("response", ""))
+
+    if not answer:
+        logger.warning(f"Ollama returned empty response | model={model}")
         return ""
+
+    logger.info(f"Ollama response generated successfully | model={model}")
+    return answer
 
 
 def call_ollama(prompt: str) -> str:
@@ -74,17 +69,17 @@ def call_ollama(prompt: str) -> str:
     if answer:
         return answer
 
-    logger.warning("Primary model failed, falling back")
-
+    logger.warning("Primary model failed, falling back to backup model")
     answer = _run_ollama(FALLBACK_MODEL, prompt)
     if answer:
         return answer
 
+    logger.error("All Ollama models failed")
     return "I do not know based on the provided documents."
 
 
 # ------------------------------------------------------------------
-# Keyword helpers
+# Keyword helpers (ONLY for dominance, NOT retrieval)
 # ------------------------------------------------------------------
 def extract_query_terms(query: str) -> set:
     return {
@@ -100,12 +95,19 @@ def keyword_overlap_score(query_terms: set, text: str) -> int:
 
 
 # ------------------------------------------------------------------
-# SECTION-AWARE CONTEXT EXTRACTION
+# SECTION-AWARE CONTEXT EXTRACTION (FIXED)
 # ------------------------------------------------------------------
 def extract_relevant_sections(scored_chunks, max_sections: int = 2):
+    """
+    Groups chunks by detected section headers.
+    Supports:
+    - Short headers (e.g., "Preamble")
+    - Long question headers (e.g., "What happens if ...?")
+    """
 
     section_scores = defaultdict(int)
     section_chunks = defaultdict(list)
+
     current_section = "UNKNOWN"
 
     for doc, meta, score in scored_chunks:
@@ -118,8 +120,8 @@ def extract_relevant_sections(scored_chunks, max_sections: int = 2):
                 len(line) >= 5
                 and line[0].isupper()
                 and (
-                    line.endswith("?")
-                    or len(line.split()) <= 10
+                    line.endswith("?")           # FIX: allow question headers
+                    or len(line.split()) <= 10   # keep short-title heuristic
                 )
             ):
                 current_section = line
@@ -150,54 +152,52 @@ def extract_relevant_sections(scored_chunks, max_sections: int = 2):
 def generate_answer(query: str, k: int = 5):
     logger.info(f"RAG query received: {query}")
 
+    # 1️⃣ Semantic retrieval
     documents, metadatas = query_vector_store(query, k)
 
-    if not documents:
+    if not documents or not metadatas:
+        logger.warning("No chunks retrieved from vector store")
         return "I do not know based on the provided documents.", []
 
-    query_terms = extract_query_terms(query)
+    logger.info(
+        "Semantic retrieval completed. "
+        "Keyword scoring will be used ONLY for dominant document selection."
+    )
 
+    # 2️⃣ Keyword extraction (dominance only)
+    query_terms = extract_query_terms(query)
+    logger.info(f"Extracted query terms (dominance only): {query_terms}")
+
+    # 3️⃣ Score chunks per document
     doc_scores = defaultdict(int)
     doc_chunks = defaultdict(list)
 
     for doc, meta in zip(documents, metadatas):
         score = keyword_overlap_score(query_terms, doc)
         file_id = meta["file_id"]
+
         doc_scores[file_id] += score
         doc_chunks[file_id].append((doc, meta, score))
 
+    # 4️⃣ Dominant document selection
     dominant_file_id = max(doc_scores, key=doc_scores.get)
+
+    if doc_scores[dominant_file_id] == 0:
+        logger.warning("No keyword overlap in any document")
+        return "I do not know based on the provided documents.", []
+
     dominant_chunks = doc_chunks[dominant_file_id]
     dominant_file_name = dominant_chunks[0][1]["file_name"]
 
-    logger.info(f"Selected dominant document: {dominant_file_name}")
+    logger.info(
+        f"Selected dominant document: {dominant_file_name} ({dominant_file_id})"
+    )
 
-    # ----------------------------------------------------------
-    # CSV STRUCTURED MODE
-    # ----------------------------------------------------------
-    if dominant_file_name.lower().endswith(".csv"):
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-                download_drive_file(dominant_file_id, tmp.name)
-                structured_answer = answer_csv_query(query, tmp.name)
-
-            if structured_answer:
-                return structured_answer, [
-                    {
-                        "file_id": dominant_file_id,
-                        "file_name": dominant_file_name,
-                    }
-                ]
-
-        except Exception:
-            logger.exception("CSV structured reasoning failed")
-
-    # ----------------------------------------------------------
-    # LLM FLOW
-    # ----------------------------------------------------------
+    # 5️⃣ Section-aware context
     selected_sections = extract_relevant_sections(dominant_chunks)
 
     if not selected_sections:
+        logger.warning("No relevant sections extracted")
         return "I do not know based on the provided documents.", []
 
     context_blocks = []
@@ -207,9 +207,21 @@ def generate_answer(query: str, k: int = 5):
 
     context = "\n\n".join(context_blocks)
 
+    # 6️⃣ Grounded prompt
     prompt = f"""
-Use ONLY the context below to answer the question.
-If the answer is not present, reply exactly:
+You are a factual assistant answering questions using structured documents.
+
+Instructions:
+- Use ONLY the information present in the context.
+- Identify the section that answers the question.
+- Use the section title as the heading.
+- Preserve original terminology and structure.
+- Present the answer as labeled points or bullet-style lines.
+- Do NOT summarize or generalize.
+- Do NOT add new information.
+- Do NOT merge content from different documents.
+
+If the answer cannot be derived, reply exactly:
 "I do not know based on the provided documents."
 
 Context:
@@ -223,9 +235,24 @@ Answer:
 
     answer = call_ollama(prompt)
 
-    return answer, [
+    sources = [
         {
             "file_id": dominant_file_id,
             "file_name": dominant_file_name,
         }
     ]
+
+    return answer, sources
+
+
+# ------------------------------------------------------------------
+# Local test
+# ------------------------------------------------------------------
+if __name__ == "__main__":
+    q = "What happens if an athlete or participant fails to respect these policies?"
+    ans, srcs = generate_answer(q)
+
+    print("\nANSWER:\n", ans)
+    print("\nSOURCES:")
+    for s in srcs:
+        print(f"- {s['file_name']} ({s['file_id']})")

@@ -7,7 +7,6 @@ from src.logger import logger
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MIME = "application/pdf"
-CSV_MIME = "text/csv"
 
 PDF_FOLDER_ID = "1xs66Xr4CGmK3ikgL7xXcyDwbFfwy6NnW"
 
@@ -15,10 +14,9 @@ PDF_FOLDER_ID = "1xs66Xr4CGmK3ikgL7xXcyDwbFfwy6NnW"
 def list_drive_documents():
     """
     - Google Docs & DOCX: from entire Drive
-    - PDFs & CSV: ONLY from specific test folder
+    - PDFs: ONLY from a specific folder
     """
-
-    logger.info("Fetching Docs, DOCX (global) and PDFs/CSVs (folder-scoped) from Drive")
+    logger.info("Fetching Docs, DOCX (global) and PDFs (folder-scoped) from Drive")
 
     creds = get_credentials()
     service = build("drive", "v3", credentials=creds)
@@ -30,10 +28,10 @@ def list_drive_documents():
         f"and trashed=false"
     )
 
-    # PDFs + CSV (ONLY from specific folder)
-    folder_query = (
-        f"('{PDF_FOLDER_ID}' in parents) and "
-        f"(mimeType='{PDF_MIME}' or mimeType='{CSV_MIME}') "
+    # PDFs (ONLY from specific folder)
+    pdf_query = (
+        f"mimeType='{PDF_MIME}' "
+        f"and '{PDF_FOLDER_ID}' in parents "
         f"and trashed=false"
     )
 
@@ -48,14 +46,14 @@ def list_drive_documents():
 
     files.extend(doc_results.get("files", []))
 
-    # Fetch PDFs + CSV
-    folder_results = service.files().list(
-        q=folder_query,
+    # Fetch PDFs from folder
+    pdf_results = service.files().list(
+        q=pdf_query,
         fields="files(id, name, mimeType)",
         pageSize=100,
     ).execute()
 
-    files.extend(folder_results.get("files", []))
+    files.extend(pdf_results.get("files", []))
 
     logger.info(f"Found {len(files)} total documents")
 
