@@ -1,11 +1,13 @@
 # src/csv_reasoner.py
 
 import pandas as pd
+import re
 from src.logger import logger
+from src.sqlite_store import SQLiteStore
 
 
 COMPARISON_KEYWORDS = {
-    "max": ["max", "maximum", "highest", "largest", "greatest"],
+    "max": ["max", "maximum", "highest", "largest", "greatest", "peak"],
     "min": ["min", "minimum", "lowest", "smallest", "least"],
     "average": ["average", "mean", "avg"],
     "sum": ["total", "sum"],
@@ -13,23 +15,15 @@ COMPARISON_KEYWORDS = {
 }
 
 
-# ----------------------------------------------------------
-# Detect numeric intent
-# ----------------------------------------------------------
 def detect_numeric_intent(query: str):
     q = query.lower()
-
     for intent, words in COMPARISON_KEYWORDS.items():
         for w in words:
             if w in q:
                 return intent
-
     return None
 
 
-# ----------------------------------------------------------
-# Clean numeric values safely
-# ----------------------------------------------------------
 def clean_numeric_series(series: pd.Series):
     cleaned = (
         series.astype(str)
@@ -40,102 +34,108 @@ def clean_numeric_series(series: pd.Series):
     return pd.to_numeric(cleaned, errors="coerce")
 
 
-# ----------------------------------------------------------
-# Detect relevant column dynamically
-# ----------------------------------------------------------
+def tokenize(text: str):
+    return re.findall(r"[a-zA-Z0-9_]+", text.lower())
+
+
 def detect_relevant_column(query: str, df: pd.DataFrame):
-    q = query.lower()
 
-    # Exact column match
+    query_tokens = set(tokenize(query))
+    numeric_columns = []
+
     for col in df.columns:
-        if col.lower() in q:
-            return col
+        cleaned = clean_numeric_series(df[col])
+        if not cleaned.isna().all():
+            numeric_columns.append(col)
 
-    # Partial match
-    for col in df.columns:
-        if any(word in col.lower() for word in q.split()):
-            return col
+    if not numeric_columns:
+        return None
 
-    # Fallback: first numeric column
-    numeric_cols = df.select_dtypes(include=["number"]).columns
-    if len(numeric_cols) > 0:
-        return numeric_cols[0]
+    best_column = None
+    best_score = 0
+
+    for col in numeric_columns:
+        col_tokens = set(tokenize(col))
+
+        score = len(query_tokens.intersection(col_tokens))
+
+        for qt in query_tokens:
+            if qt in col.lower():
+                score += 1
+
+        if col.lower() in ["id", "index"]:
+            score = 0
+
+        if score > best_score:
+            best_score = score
+            best_column = col
+
+    if best_score >= 1:
+        return best_column
 
     return None
 
 
-# ----------------------------------------------------------
-# Structured CSV reasoning engine
-# ----------------------------------------------------------
-def answer_csv_query(query: str, csv_path: str):
+def answer_csv_query(query: str, file_name: str):
+
     logger.info("Attempting structured CSV reasoning")
 
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception:
-        logger.exception("Failed to load CSV")
+    store = SQLiteStore()
+    df = store.load_dataframe(file_name)
+
+    if df is None:
         return None
+
+    query_lower = query.lower()
+
+    # Dataset-level
+    if any(word in query_lower for word in ["row", "rows", "record", "records"]):
+        return f"The dataset contains {len(df)} rows."
 
     intent = detect_numeric_intent(query)
     if not intent:
         return None
 
     column = detect_relevant_column(query, df)
-    if not column or column not in df.columns:
+    if not column:
         return None
 
     try:
         numeric_series = clean_numeric_series(df[column])
-        df[column] = numeric_series
 
         if numeric_series.isna().all():
             return None
 
-        # Detect date column automatically
         date_column = None
         for col in df.columns:
-            if "date" in col.lower():
+            lower = col.lower()
+            if any(word in lower for word in ["date", "time", "day", "month", "year"]):
                 date_column = col
                 break
 
-        # ---------------- MAX ----------------
         if intent == "max":
             idx = numeric_series.idxmax()
             value = numeric_series.max()
-            row = df.loc[idx]
-
             if date_column:
-                return (
-                    f"The highest value of '{column}' occurred on "
-                    f"{row[date_column]} with a value of {value:.2f}."
-                )
+                return f"The highest value of '{column}' occurred on {df.loc[idx][date_column]} with a value of {value:.2f}."
             return f"The highest value of '{column}' is {value:.2f}."
 
-        # ---------------- MIN ----------------
-        elif intent == "min":
+        if intent == "min":
             idx = numeric_series.idxmin()
             value = numeric_series.min()
-            row = df.loc[idx]
-
             if date_column:
-                return (
-                    f"The lowest value of '{column}' occurred on "
-                    f"{row[date_column]} with a value of {value:.2f}."
-                )
+                return f"The lowest value of '{column}' occurred on {df.loc[idx][date_column]} with a value of {value:.2f}."
             return f"The lowest value of '{column}' is {value:.2f}."
 
-        # ---------------- AVERAGE ----------------
-        elif intent == "average":
+        if intent == "average":
             value = numeric_series.mean()
             return f"The average value of '{column}' is {value:.2f}."
 
-        # ---------------- SUM ----------------
-        elif intent == "sum":
+        if intent == "sum":
             value = numeric_series.sum()
             return f"The total sum of '{column}' is {value:.2f}."
 
-        # ---------------- COUNT ----------------
-        elif intent == "count":
+        if intent == "count":
             value = numeric_series.count()
             return f"The count of '{column}' is {value}."
 

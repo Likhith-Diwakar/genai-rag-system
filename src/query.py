@@ -6,32 +6,50 @@ from src.logger import logger
 
 
 def query_vector_store(query: str, k: int = 5):
-    # 🔥 Explicit semantic search log
     logger.info(f"Vector query (semantic embedding): '{query}'")
 
     store = VectorStore()
 
-    # Embed query (semantic)
-    query_embedding = embed_texts([query])[0]
+    # ---------------- EMBED QUERY ----------------
+    try:
+        query_embedding = embed_texts([query])[0]
+    except Exception:
+        logger.exception("Failed to embed query")
+        return [], []
 
-    # Chroma semantic search
-    results = store.collection.query(
-        query_embeddings=[query_embedding],
-        n_results=k,
-        include=["documents", "metadatas", "distances"]
-    )
+    # ---------------- VECTOR SEARCH ----------------
+    try:
+        results = store.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=k,
+            include=["documents", "metadatas", "distances"]
+        )
+    except Exception:
+        logger.exception("Vector store query failed")
+        return [], []
 
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
 
-    # 🔥 PROOF LOGS — this is what convinces mentors
+    if not documents:
+        logger.warning("No results returned from vector store")
+        return [], []
+
+    # ---------------- LOG RESULTS ----------------
     for i, (meta, dist) in enumerate(zip(metadatas, distances)):
+        file_name = meta.get("file_name", "UNKNOWN")
+        chunk_id = meta.get("chunk_id", "UNKNOWN")
+
+        # Convert distance to similarity score (if cosine distance)
+        similarity = 1 - dist if dist is not None else None
+
         logger.info(
             f"Semantic hit {i + 1} | "
-            f"file={meta['file_name']} | "
-            f"chunk={meta['chunk_id']} | "
-            f"distance={dist:.4f}"
+            f"file={file_name} | "
+            f"chunk={chunk_id} | "
+            f"distance={dist:.4f} | "
+            f"similarity={similarity:.4f}"
         )
 
     logger.info(f"Retrieved {len(documents)} chunks via semantic search")
