@@ -1,10 +1,10 @@
 # GenAI RAG System - Design, Implementation & Architecture
 
 >
-Overview:
 
-This repository contains the implementation of a Retrieval-Augmented Generation (RAG) based document querying system developed during an advanced internship project. The system has evolved from a basic RAG prototype into a multi-format, hybrid-reasoning architecture capable of ingesting structured and unstructured documents from Google Drive, performing format-aware chunking, generating semantic embeddings, and producing grounded responses using both structured computation and LLM-based reasoning. The project is now focused on architecture refinement, structured reasoning enhancement, and deployment readiness.
+Overview : 
 ---
+This repository contains the implementation of a Retrieval-Augmented Generation (RAG) based document querying system developed during an advanced internship project. The system has evolved from a basic RAG prototype into a multi-format, hybrid-reasoning architecture capable of ingesting structured and unstructured documents from Google Drive, performing format-aware chunking, generating semantic embeddings, and producing grounded responses using both structured computation and LLM-based reasoning. The project is now focused on architecture refinement, structured reasoning enhancement, and deployment readiness.
 
 ## Table of Contents
 
