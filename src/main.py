@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import logging
 
 from src.list_docs import list_drive_documents
 from src.extract_text import extract_doc_text
@@ -133,5 +134,26 @@ def main():
     logger.info("Drive sync complete")
 
 
+# ==========================================================
+# ✅ Proper Global Verbosity Control
+# ==========================================================
+
+def run_sync(verbose: bool = True):
+
+    if verbose:
+        main()
+        return
+
+    # 🔒 Silence ALL logging globally
+    previous_disable_level = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+
+    try:
+        main()
+    finally:
+        # 🔓 Restore logging exactly as it was
+        logging.disable(previous_disable_level)
+
+
 if __name__ == "__main__":
-    main()
+    run_sync(verbose=True)
