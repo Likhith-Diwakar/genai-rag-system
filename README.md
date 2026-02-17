@@ -1,26 +1,43 @@
-# GenAI RAG System – Design, Implementation & Architecture Phase
+# GenAI RAG System - Design, Implementation & Architecture
 
-## Overview
-
-This repository contains the implementation of a Retrieval-Augmented Generation (RAG) based document querying system developed during an advanced internship project.
-
-The system has evolved from a basic RAG prototype into a multi-format, hybrid-reasoning architecture capable of ingesting structured and unstructured documents from Google Drive, performing format-aware chunking, generating semantic embeddings, and producing grounded responses using both structured computation and LLM-based reasoning.
-
-The project is now focused on architecture refinement, structured reasoning enhancement, and deployment readiness.
-
-Current focus areas:
-
-- Hybrid structured + LLM reasoning
-- Format-aware adaptive chunking
-- Retrieval robustness improvements
-- Architecture hardening
-- Production-ready deployment planning
+> A Retrieval-Augmented Generation (RAG) based document querying system developed during an advanced internship project.
 
 ---
 
-## System Capabilities
+## Table of Contents
 
-### 1. End-to-End RAG Pipeline
+- [Overview](#overview)
+- [Core Capabilities](#core-capabilities)
+- [Supported Input Formats](#supported-input-formats)
+- [Hybrid Structured + LLM Reasoning](#hybrid-structured--llm-reasoning)
+- [Format-Aware Adaptive Chunking](#format-aware-adaptive-chunking)
+- [Retrieval Improvements](#retrieval-improvements)
+- [High-Level Architecture](#high-level-architecture)
+- [Technical Stack](#technical-stack)
+- [Current Focus](#current-focus)
+- [Next Phase](#next-phase)
+- [Repository Status](#repository-status)
+
+---
+
+## Overview
+
+The system evolved from a basic prototype into a multi-format, hybrid-reasoning architecture capable of:
+
+- Ingesting structured and unstructured documents from Google Drive
+- Performing format-aware adaptive chunking
+- Generating high-quality semantic embeddings
+- Executing deterministic structured computation for tabular data
+- Producing grounded responses using LLM-based reasoning
+- Maintaining storage consistency across ingestion cycles
+
+The project is currently in the **architecture refinement and production-readiness** phase.
+
+---
+
+## Core Capabilities
+
+### End-to-End RAG Pipeline
 
 - Google Drive ingestion via Drive API
 - Multi-format document extraction
@@ -28,87 +45,91 @@ Current focus areas:
 - BGE-M3 embedding generation
 - Persistent vector storage using ChromaDB
 - Semantic similarity retrieval with scoring
-- Dominant-document selection logic
+- Dominant-document filtering logic
 - Section-aware context construction
-- Hybrid reasoning pipeline:
-  - Structured CSV numeric reasoning
-  - LLM-based contextual reasoning
+
+### Hybrid Reasoning
+
+- Structured CSV numeric reasoning
+- LLM-based contextual reasoning
 - Automatic fallback LLM support
+
+### Interface & Observability
+
 - Streamlit-based chat interface
-- Source attribution included in responses
+- Source attribution in responses
 - Detailed retrieval logging for explainability
 
 ---
 
 ## Supported Input Formats
 
-| Format        | Extraction Method       | Chunking Strategy         | Reasoning Mode |
-|--------------|------------------------|---------------------------|----------------|
-| Google Docs  | Drive API extraction   | Paragraph-based           | LLM            |
-| DOCX         | python-docx            | Paragraph-based           | LLM            |
-| PDF          | PyMuPDF                | Paragraph-based           | LLM            |
-| CSV          | Pandas parsing         | Row-based structured text | Hybrid (Structured + LLM fallback) |
+| Format | Extraction Method | Chunking Strategy | Reasoning Mode |
+|---|---|---|---|
+| Google Docs | Drive API | Paragraph-based | LLM |
+| DOCX | python-docx | Paragraph-based | LLM |
+| PDF | PyMuPDF | Paragraph-based | LLM |
+| CSV | Pandas parsing | Row-based structured text | Hybrid |
 
 ---
 
-## Hybrid CSV Structured Reasoning
+## Hybrid Structured + LLM Reasoning
 
-The system now includes structured reasoning support for CSV files.
+The system introduces a hybrid reasoning layer for structured datasets.
 
-For CSV queries, the pipeline:
+### CSV Structured Reasoning
 
-- Detects numeric intent:
-  - Maximum
-  - Minimum
-  - Average
-  - Sum
-  - Count
-- Automatically detects the most relevant column
-- Performs deterministic row-level computation using Pandas
-- Applies date-aware formatting when applicable
-- Bypasses LLM for purely numeric structured queries
-- Falls back to LLM when structured reasoning is not applicable
+For CSV queries, the system:
 
-This ensures:
+1. **Detects numeric intent** — Maximum, Minimum, Average, Sum, Count
+2. **Automatically identifies** the relevant numeric column
+3. **Performs deterministic computation** using Pandas
+4. **Applies date-aware formatting** where applicable
+5. **Bypasses the LLM** for purely numeric queries
+6. **Falls back to LLM** when structured reasoning is insufficient
 
-- Deterministic numeric answers
-- No hallucinated calculations
-- Improved reliability for structured datasets
-- Clean separation between retrieval and computation logic
+### Benefits
+
+| Benefit | Description |
+|---|---|
+| Deterministic responses | No variability in numeric outputs |
+| Zero hallucinated calculations | Computation is always Pandas-driven |
+| Faster response time | LLM overhead skipped for structured queries |
+| Clear separation | Retrieval and computation are decoupled |
 
 ---
 
-## Format-Aware Chunking
+## Format-Aware Adaptive Chunking
 
-The ingestion pipeline dynamically selects chunking strategies depending on document type:
+The ingestion pipeline dynamically selects chunking strategies based on document type:
 
-- Paragraph-based chunking for Google Docs, DOCX, and PDF files
-- Row-based chunking for CSV files
+- **Paragraph-based chunking** — for Docs, DOCX, and PDF files
+- **Row-based chunking** — for CSV files
 
-This approach:
+This improves:
 
-- Preserves semantic integrity
-- Prevents cross-section contamination
-- Improves retrieval precision
-- Enhances grounding consistency
+- Semantic integrity
+- Retrieval precision
+- Context grounding
+- Reduced cross-document contamination
 
 ---
 
 ## Retrieval Improvements
 
-The system incorporates several retrieval optimizations:
+Key retrieval enhancements include:
 
-- Upgraded embeddings to BGE-M3 for improved query-document alignment
-- Migrated from token-based chunking to paragraph-based chunking
-- Implemented dominant-document selection using:
+- Upgraded embeddings to **BGE-M3**
+- Migration from token-based to **paragraph-based chunking**
+- **Dominant-document selection** using:
   - Vector similarity scoring
   - Keyword overlap scoring (document-level filtering only)
 - Section-aware context grouping
-- Reduced cross-document context mixing
+- Reduced cross-document mixing
 - Structured reasoning bypass for CSV numeric queries
 - Enhanced logging for explainable retrieval decisions
 
-Results:
+### Outcomes
 
 - Improved grounding accuracy
 - Reduced hallucination risk
@@ -117,126 +138,86 @@ Results:
 
 ---
 
-## Current Architecture (High-Level)
+## High-Level Architecture
 
-Google Drive  
-→ Text Extraction  
-→ Format-Aware Chunking  
-→ BGE-M3 Embeddings  
-→ ChromaDB (Persistent Vector Store)  
-→ Semantic Retrieval  
-→ Dominant Document Filtering  
-→ Section-Aware Context Construction  
-→ Hybrid Reasoning Layer  
-&nbsp;&nbsp;&nbsp;&nbsp;• Structured CSV Computation (Pandas)  
-&nbsp;&nbsp;&nbsp;&nbsp;• LLM Reasoning (Primary + Fallback via Ollama)  
-→ Streamlit UI  
+```
+Google Drive
+    |
+Format-Aware Extraction
+    |
+Paragraph / Row-Based Chunking
+    |
+BGE-M3 Embeddings
+    |
+ChromaDB (Persistent Vector Store)
+    |
+Semantic Retrieval
+    |
+Dominant Document Filtering
+    |
+Section-Aware Context Construction
+    |
+Hybrid Reasoning Layer
+    |-- Structured CSV Engine (Pandas)
+    |-- LLM Reasoning (Primary + Fallback)
+    |
+Streamlit UI
+```
 
 ---
 
 ## Technical Stack
 
-- Python
-- Google Drive API
-- PyMuPDF (PDF extraction)
-- python-docx
-- Pandas (Structured CSV reasoning)
-- SentenceTransformers (BGE-M3)
-- ChromaDB
-- Ollama (Local LLM)
-- Streamlit
-- SQLite (Tracker DB)
+| Component | Technology |
+|---|---|
+| Language | Python |
+| Drive Integration | Google Drive API |
+| PDF Extraction | PyMuPDF |
+| DOCX Extraction | python-docx |
+| Structured Data | Pandas |
+| Embeddings | SentenceTransformers (BGE-M3) |
+| Vector Store | ChromaDB |
+| Tracker Database | SQLite |
+| LLM Backend | Local or API-based |
+| Frontend | Streamlit |
 
 ---
 
 ## Current Focus
 
-- Improving retrieval robustness for overlapping terminology across documents
-- Refining numeric intent detection for structured queries
-- Strengthening dominant-document selection logic
-- Refactoring toward API-first backend (FastAPI)
-- Designing production-grade system architecture
-- Exploring cost-efficient deployment strategies (cloud storage + containerized inference services)
+- [ ] Strengthening dominant-document filtering
+- [ ] Improving numeric intent detection
+- [ ] Refining section-aware context construction
+- [ ] Refactoring toward API-first backend (FastAPI)
+- [ ] Designing scalable production architecture
+- [ ] Cost-aware deployment planning
 
 ---
 
-## Next Steps
+## Next Phase
 
-- Refactor backend into FastAPI for scalable API-based serving
-- Modularize hybrid reasoning layer
-- Add adaptive chunk sizing heuristics
-- Implement evaluation metrics for retrieval and grounding
-- Design full production architecture diagram
-- Plan cost-efficient deployment (cloud storage + scalable inference layer)
-- Introduce monitoring and logging improvements for production readiness
+- [ ] Backend refactor to **FastAPI**
+- [ ] Modular hybrid reasoning engine
+- [ ] Adaptive chunk sizing heuristics
+- [ ] Retrieval and grounding evaluation metrics
+- [ ] Production deployment architecture design
+- [ ] Containerized inference services
+- [ ] Monitoring and observability integration
 
 ---
 
 ## Repository Status
 
-The project is currently in an advanced Proof-of-Concept stage with:
+> **Advanced Proof-of-Concept** — stable for multi-format ingestion and hybrid reasoning; production hardening in progress.
 
-- Stable multi-format ingestion
+**Stable:**
+- Multi-format ingestion
 - Robust semantic retrieval
 - Hybrid structured + LLM reasoning
-- Deterministic CSV numeric computation
+- Deterministic CSV computation
 - Grounded response generation with source attribution
 
-The next phase focuses on:
-
+**In Progress:**
 - Architecture hardening
-- Deployment design
 - Scalability improvements
-- Production-readiness enhancements
-
-
-
----
-
-## Low-Level Architecture – Hybrid RAG System
-
-```mermaid
-flowchart TB
-
-subgraph Ingestion_Pipeline
-    A["Google Drive / PDF / DOCX / CSV"]
-    B["Document Type Detection"]
-    C["Format-Aware Chunking"]
-    D["Metadata Tagging"]
-    E["BGE-M3 Embedding Generator"]
-    F[(ChromaDB Vector Store)]
-    
-    A --> B --> C --> D --> E --> F
-end
-
-subgraph Query_Processing
-    U["Streamlit UI"]
-    Q["Query Controller"]
-    I{"Numeric Intent?"}
-    QE["BGE-M3 Query Embedding"]
-    VS["Vector Search Top-K"]
-    DD["Dominant Document Selection"]
-    SC["Section-aware Context"]
-    
-    U --> Q --> I
-    QE --> F
-    F --> VS --> DD --> SC
-end
-
-subgraph Hybrid_Reasoning
-    S["Structured Engine (Pandas)"]
-    LLM1["Qwen 2.5 - Primary"]
-    LLM2["TinyLlama - Fallback"]
-end
-
-I -- Yes --> S
-S --> U
-
-I -- No --> QE
-SC --> LLM1
-LLM1 --> U
-LLM1 -- On Failure --> LLM2
-LLM2 --> U
-```
-
-
+- Production-readiness
