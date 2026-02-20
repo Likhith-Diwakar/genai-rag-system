@@ -3,10 +3,9 @@
 import tempfile
 import os
 import pandas as pd
-
-from src.download_file import download_drive_file
-from src.sqlite_store import SQLiteStore
-from src.logger import logger
+from src.ingestion.download_file import download_drive_file
+from src.storage.sqlite_store import SQLiteStore
+from src.utils.logger import logger
 
 
 def extract_csv_text(file_id: str, file_name: str):

@@ -1,6 +1,6 @@
 from googleapiclient.discovery import build
-from src.auth import get_credentials
-from src.logger import logger
+from src.utils.auth import get_credentials
+from src.utils.logger import logger
 
 
 def extract_doc_text(doc_id: str) -> str:

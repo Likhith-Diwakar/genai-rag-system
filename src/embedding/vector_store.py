@@ -4,7 +4,7 @@ import os
 import threading
 import chromadb
 from chromadb.config import Settings
-from src.logger import logger
+from src.utils.logger import logger
 
 # Disable Chroma telemetry completely
 os.environ["CHROMA_TELEMETRY_ENABLED"] = "false"

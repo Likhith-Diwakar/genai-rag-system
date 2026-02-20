@@ -2,8 +2,8 @@
 
 import pandas as pd
 import re
-from src.logger import logger
-from src.sqlite_store import SQLiteStore
+from src.utils.logger import logger
+from src.storage.sqlite_store import SQLiteStore
 
 
 COMPARISON_KEYWORDS = {

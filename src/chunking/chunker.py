@@ -1,7 +1,7 @@
 # src/chunker.py
 
 from typing import List
-from src.logger import logger
+from src.utils.logger import logger
 
 
 def chunk_text(

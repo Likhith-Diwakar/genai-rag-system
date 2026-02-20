@@ -9,10 +9,10 @@ load_dotenv()
 
 from groq import Groq
 
-from src.query import query_vector_store
-from src.logger import logger
+from src.llm.query import query_vector_store
+from src.utils.logger import logger
 from src.csv_reasoner import answer_csv_query, detect_numeric_intent
-from src.sqlite_store import SQLiteStore
+from src.storage.sqlite_store import SQLiteStore
 
 
 PRIMARY_MODEL = "llama-3.3-70b-versatile"
@@ -193,7 +193,6 @@ def generate_answer(query: str, k: int = 5):
     dominant_file_name = dominant_chunks[0][1]["file_name"]
 
     # ==========================================================
-    # 🔥 SMART CONTEXT REDUCTION (NO HARDCODING)
     # ==========================================================
 
     scored_chunks = []

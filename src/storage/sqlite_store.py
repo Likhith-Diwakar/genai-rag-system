@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import pandas as pd
-from src.logger import logger
+from src.utils.logger import logger
 
 DB_PATH = "data/csv_store.db"
 
@@ -15,7 +15,7 @@ class SQLiteStore:
     # -------------------------------------------------
     # Safe table name formatting
     # -------------------------------------------------
-    def _safe_table_name(self, file_name: str):
+    def _safe_table_name(self, file_name: str) -> str:
         return file_name.replace(".", "_").replace(" ", "_")
 
     # -------------------------------------------------
@@ -32,10 +32,8 @@ class SQLiteStore:
     def load_dataframe(self, file_name: str):
         table_name = self._safe_table_name(file_name)
         try:
-            return pd.read_sql_query(
-                f"SELECT * FROM '{table_name}'",
-                self.conn
-            )
+            query = f"SELECT * FROM '{table_name}'"
+            return pd.read_sql_query(query, self.conn)
         except Exception:
             logger.warning(f"SQLite table not found: {table_name}")
             return None
@@ -43,7 +41,7 @@ class SQLiteStore:
     # -------------------------------------------------
     # Check if table exists
     # -------------------------------------------------
-    def table_exists(self, file_name: str):
+    def table_exists(self, file_name: str) -> bool:
         table_name = self._safe_table_name(file_name)
         cursor = self.conn.cursor()
         cursor.execute(
@@ -53,7 +51,7 @@ class SQLiteStore:
         return cursor.fetchone() is not None
 
     # -------------------------------------------------
-    # 🔥 Required for RAG: List all tables
+    # List all tables
     # -------------------------------------------------
     def list_tables(self):
         cursor = self.conn.cursor()
@@ -61,3 +59,14 @@ class SQLiteStore:
             "SELECT name FROM sqlite_master WHERE type='table';"
         )
         return [row[0] for row in cursor.fetchall()]
+
+    # -------------------------------------------------
+    # Drop table safely during deletion sync
+    # -------------------------------------------------
+    def drop_table(self, file_name: str):
+        table_name = self._safe_table_name(file_name)
+
+        if self.table_exists(file_name):
+            logger.warning(f"Dropping SQLite table: {table_name}")
+            self.conn.execute(f"DROP TABLE '{table_name}'")
+            self.conn.commit()

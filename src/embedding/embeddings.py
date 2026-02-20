@@ -2,7 +2,7 @@
 
 from typing import List
 from sentence_transformers import SentenceTransformer
-from src.logger import logger
+from src.utils.logger import logger
 import threading
 
 MODEL_NAME = "BAAI/bge-m3"

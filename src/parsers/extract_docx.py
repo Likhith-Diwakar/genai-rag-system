@@ -2,7 +2,7 @@
 # src/extract_docx.py
 
 from docx import Document
-from src.logger import logger
+from src.utils.logger import logger
 
 
 def extract_docx_text(file_path: str) -> str:

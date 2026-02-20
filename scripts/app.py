@@ -1,61 +1,73 @@
 import streamlit as st
-import time
-from src.rag import generate_answer
-from src.main import run_sync
+from apscheduler.schedulers.background import BackgroundScheduler
+from src.llm.rag import generate_answer
+from src.ingestion.main import run_sync
+
+
+# ----------------------------------------------------------
+# PAGE CONFIG
+# ----------------------------------------------------------
 
 st.set_page_config(page_title="Google Drive RAG Chatbot", layout="wide")
 
 st.title("Google Drive RAG Chatbot")
 st.caption("Ask questions over your Google Drive documents")
 
+
 # ----------------------------------------------------------
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # ----------------------------------------------------------
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "sync_running" not in st.session_state:
-    st.session_state.sync_running = False
+if "initial_sync_done" not in st.session_state:
+    st.session_state.initial_sync_done = False
 
-if "auto_synced" not in st.session_state:
-    st.session_state.auto_synced = False
+if "scheduler_started" not in st.session_state:
+    st.session_state.scheduler_started = False
 
 
 # ----------------------------------------------------------
-# 🔄 AUTO SYNC ON FIRST LOAD (SILENT)
+# BACKGROUND SYNC FUNCTION (SILENT)
 # ----------------------------------------------------------
 
-if not st.session_state.auto_synced:
+def background_sync():
+    # Silent incremental sync
+    run_sync(verbose=False)
 
-    st.session_state.sync_running = True
 
+# ----------------------------------------------------------
+# INITIAL SYNC (RUNS ONCE)
+# ----------------------------------------------------------
+
+if not st.session_state.initial_sync_done:
     with st.spinner("Initial Drive sync..."):
-        run_sync(verbose=False)
+        run_sync(verbose=True)   # allow logs on first run
 
-    st.session_state.sync_running = False
-    st.session_state.auto_synced = True
+    st.session_state.initial_sync_done = True
 
 
 # ----------------------------------------------------------
-# 🔄 SIDEBAR MANUAL SYNC (VERBOSE)
+# START BACKGROUND SCHEDULER
 # ----------------------------------------------------------
 
-with st.sidebar:
-    st.header("System Controls")
+def start_scheduler():
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        background_sync,
+        trigger="interval",
+        minutes=2,          # > sync runtime
+        max_instances=1,
+        coalesce=True
+    )
+    scheduler.start()
+    return scheduler
 
-    if st.button("🔄 Sync Drive") and not st.session_state.sync_running:
 
-        st.session_state.sync_running = True
-
-        with st.spinner("Syncing documents from Drive..."):
-            run_sync(verbose=True)
-
-        st.session_state.sync_running = False
-        st.success("Drive synced successfully.")
-
-    elif st.session_state.sync_running:
-        st.warning("Sync already in progress...")
+if not st.session_state.scheduler_started:
+    start_scheduler()
+    st.session_state.scheduler_started = True
 
 
 # ----------------------------------------------------------
@@ -78,12 +90,10 @@ for msg in st.session_state.messages:
                     file_id = s.get("file_id")
                     file_name = s.get("file_name")
 
-                    # ✅ Clickable Drive link if file_id exists
                     if file_id:
                         url = f"https://drive.google.com/file/d/{file_id}/view"
                         st.markdown(f"- 🔗 [{file_name}]({url})")
                     else:
-                        # ✅ CSV fallback (non-clickable)
                         st.markdown(f"- {file_name}")
 
 

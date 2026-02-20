@@ -1,8 +1,8 @@
 # src/list_docs.py
 
 from googleapiclient.discovery import build
-from src.auth import get_credentials
-from src.logger import logger
+from src.utils.auth import get_credentials
+from src.utils.logger import logger
 
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

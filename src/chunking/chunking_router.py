@@ -1,7 +1,7 @@
 # src/chunking_router.py
 
-from src.chunker import chunk_text
-from src.logger import logger
+from src.chunking.chunker import chunk_text
+from src.utils.logger import logger
 
 
 def route_chunking(mime_type: str, text: str):

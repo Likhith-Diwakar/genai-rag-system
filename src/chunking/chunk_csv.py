@@ -1,6 +1,6 @@
 # src/chunk_csv.py
 
-from src.logger import logger
+from src.utils.logger import logger
 
 
 def chunk_csv_text(text: str, max_rows_per_chunk: int = 10):

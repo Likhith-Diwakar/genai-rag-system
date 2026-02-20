@@ -1,8 +1,8 @@
 # src/download_file.py
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from src.auth import get_credentials
-from src.logger import logger
+from src.utils.auth import get_credentials
+from src.utils.logger import logger
 import io
 import os
 

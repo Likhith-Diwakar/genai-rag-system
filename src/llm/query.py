@@ -1,8 +1,8 @@
 # src/query.py
 
-from src.embeddings import embed_texts
-from src.vector_store import VectorStore
-from src.logger import logger
+from src.embedding.embeddings import embed_texts
+from src.embedding.vector_store import VectorStore
+from src.utils.logger import logger
 
 
 def query_vector_store(query: str, k: int = 5):
