@@ -15,6 +15,8 @@ def chunk_text(
         logger.warning("Empty text received for chunking")
         return []
 
+    text = text.replace("\r\n", "\n").strip()
+
     # --------------------------------------------------------
     # CSV STRATEGY (ROW-BASED)
     # --------------------------------------------------------
@@ -40,24 +42,63 @@ def chunk_text(
         return chunks
 
     # --------------------------------------------------------
-    # DEFAULT PARAGRAPH STRATEGY (Docs, DOCX, PDF)
+    # PDF TABLE-AWARE STRATEGY
+    # --------------------------------------------------------
+    if mime_type == "application/pdf" and "--- TABLE" in text:
+        logger.info("Using PDF table-aware chunking strategy")
+
+        chunks = []
+
+        sections = text.split("\n--- TABLE")
+        normal_text = sections[0].strip()
+
+        # First chunk normal paragraph text
+        if normal_text:
+            chunks.extend(_paragraph_chunk(normal_text, max_chars, overlap_chars))
+
+        # Process each table separately
+        for table_section in sections[1:]:
+            table_section = "--- TABLE" + table_section
+            lines = [l.strip() for l in table_section.split("\n") if l.strip()]
+
+            if len(lines) < 2:
+                continue
+
+            header = lines[1]  # header row
+            header_cols = [h.strip() for h in header.split("|")]
+
+            for row in lines[2:]:
+                row_cols = [c.strip() for c in row.split("|")]
+
+                if len(row_cols) != len(header_cols):
+                    continue
+
+                structured_row = []
+                for h, c in zip(header_cols, row_cols):
+                    structured_row.append(f"{h}: {c}")
+
+                chunks.append("\n".join(structured_row))
+
+        logger.info(f"Created {len(chunks)} PDF table-aware chunks")
+        return chunks
+
+    # --------------------------------------------------------
+    # DEFAULT PARAGRAPH STRATEGY
     # --------------------------------------------------------
 
     logger.info("Using paragraph-based chunking strategy")
+    return _paragraph_chunk(text, max_chars, overlap_chars)
 
-    text = text.replace("\r\n", "\n").strip()
+
+def _paragraph_chunk(text: str, max_chars: int, overlap_chars: int) -> List[str]:
+
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-
-    logger.info(f"Chunking text | paragraphs={len(paragraphs)}")
-
     chunks = []
     current_chunk = ""
 
     for para in paragraphs:
 
-        # Hard split large paragraph
         if len(para) > max_chars:
-            logger.debug("Large paragraph detected, hard-splitting")
             start = 0
             while start < len(para):
                 end = start + max_chars
@@ -86,5 +127,4 @@ def chunk_text(
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
 
-    logger.info(f"Created {len(chunks)} chunks")
     return chunks

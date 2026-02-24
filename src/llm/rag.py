@@ -2,17 +2,12 @@
 
 import os
 import re
-from collections import defaultdict
-
 from dotenv import load_dotenv
 load_dotenv()
 
 from groq import Groq
-
 from src.llm.query import query_vector_store
 from src.utils.logger import logger
-from src.csv_reasoner import answer_csv_query, detect_numeric_intent
-from src.storage.sqlite_store import SQLiteStore
 
 
 PRIMARY_MODEL = "llama-3.3-70b-versatile"
@@ -40,7 +35,7 @@ def call_groq(model: str, system_message: str, user_message: str) -> str:
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": user_message},
             ],
-            temperature=0,
+            temperature=0.1,
             max_tokens=1500,
         )
 
@@ -71,19 +66,6 @@ def call_llm(system_message: str, user_message: str) -> str:
 # HELPERS
 # ==========================================================
 
-def extract_query_terms(query: str) -> set:
-    return {
-        word.lower().strip("“”\"?,.")
-        for word in query.split()
-        if len(word) > 3
-    }
-
-
-def keyword_overlap_score(query_terms: set, text: str) -> int:
-    text = text.lower()
-    return sum(1 for term in query_terms if term in text)
-
-
 def extract_csv_filename(query: str):
     match = re.search(r'([a-zA-Z0-9_\-]+\.csv)', query.lower())
     if match:
@@ -103,121 +85,68 @@ def generate_answer(query: str, k: int = 5):
 
     logger.info(f"RAG query received: {query}")
 
-    sqlite_store = SQLiteStore()
-
-    query_lower = query.lower()
-    query_terms = extract_query_terms(query)
-    numeric_intent = detect_numeric_intent(query)
-
-    # ==========================================================
-    # 1️⃣ STRICT CSV FILE NAME OVERRIDE
-    # ==========================================================
-
-    csv_file = extract_csv_filename(query_lower)
-
-    if csv_file:
-
-        if sqlite_store.table_exists(csv_file):
-            logger.info(f"Strict SQLite override triggered: {csv_file}")
-
-            structured_answer = answer_csv_query(query, csv_file)
-
-            if structured_answer:
-                return structured_answer, [
-                    {"file_id": None, "file_name": csv_file}
-                ]
-
-            return "I do not know based on the provided documents.", []
-
-        else:
-            logger.warning(f"CSV table not found in SQLite: {csv_file}")
-            return "I do not know based on the provided documents.", []
-
-    # ==========================================================
-    # 2️⃣ GENERIC CSV PRIORITY MODE
-    # ==========================================================
-
-    if numeric_intent or "row" in query_lower or "record" in query_lower:
-
-        best_csv = None
-        best_score = 0
-
-        for table in sqlite_store.list_tables():
-
-            df = sqlite_store.load_dataframe(table)
-            if df is None:
-                continue
-
-            column_text = " ".join(df.columns).lower()
-
-            score = sum(1 for term in query_terms if term in column_text)
-
-            if "row" in query_lower or "record" in query_lower:
-                score += 2
-
-            if score > best_score:
-                best_score = score
-                best_csv = table
-
-        if best_csv and best_score > 0:
-
-            structured_answer = answer_csv_query(query, best_csv)
-
-            if structured_answer:
-                return structured_answer, [
-                    {"file_id": None, "file_name": best_csv}
-                ]
-
-            return "I do not know based on the provided documents.", []
-
-    # ==========================================================
-    # 3️⃣ NORMAL TEXT RAG FLOW (CHROMA)
-    # ==========================================================
-
-    documents, metadatas = query_vector_store(query, k)
+    # 🔥 Increased retrieval window for better recall
+    documents, metadatas, scores = query_vector_store(query, k=40)
 
     if not documents:
+        logger.warning("No documents retrieved from vector store.")
         return "I do not know based on the provided documents.", []
 
-    doc_scores = defaultdict(int)
-    doc_chunks = defaultdict(list)
-
-    for doc, meta in zip(documents, metadatas):
-        score = keyword_overlap_score(query_terms, doc)
-        file_id = meta["file_id"]
-        doc_scores[file_id] += score
-        doc_chunks[file_id].append((doc, meta))
-
-    dominant_file_id = max(doc_scores, key=doc_scores.get)
-    dominant_chunks = doc_chunks[dominant_file_id]
-    dominant_file_name = dominant_chunks[0][1]["file_name"]
-
     # ==========================================================
+    # DOMINANT DOCUMENT SELECTION
     # ==========================================================
 
-    scored_chunks = []
+    highest_chunk_index = max(
+        range(len(scores)),
+        key=lambda i: scores[i]
+    )
 
-    for doc, meta in dominant_chunks:
-        score = keyword_overlap_score(query_terms, doc)
-        scored_chunks.append((score, doc))
+    dominant_file_id = metadatas[highest_chunk_index].get("file_id")
 
-    scored_chunks.sort(reverse=True, key=lambda x: x[0])
+    if not dominant_file_id:
+        logger.warning("Unable to determine dominant document.")
+        return "I do not know based on the provided documents.", []
 
-    # Keep top 3 relevant chunks only
-    top_chunks = [doc for score, doc in scored_chunks[:3]]
+    dominant_file_name = metadatas[highest_chunk_index].get(
+        "file_name", "UNKNOWN"
+    )
 
-    context = "\n\n".join(top_chunks)
+    logger.info(
+        f"Dominant document selected | file={dominant_file_name}"
+    )
+
+    # Collect chunks only from dominant file
+    dominant_chunks = [
+        (doc, meta, score)
+        for doc, meta, score in zip(documents, metadatas, scores)
+        if meta.get("file_id") == dominant_file_id
+    ]
+
+    # Sort by similarity score
+    dominant_chunks.sort(key=lambda x: x[2], reverse=True)
+
+    # Use top 8 chunks from dominant file
+    top_chunks = dominant_chunks[:8]
+
+    context = "\n\n".join([doc for doc, meta, score in top_chunks])
+
+    # ==========================================================
+    # TABLE-AWARE PROMPT
+    # ==========================================================
 
     system_message = """
-You are a strict factual Retrieval-Augmented Generation (RAG) assistant.
+You are a factual Retrieval-Augmented Generation (RAG) assistant.
 
-Rules:
-1. Answer ONLY using the provided context.
-2. Do NOT use external knowledge.
-3. Do NOT guess or assume.
-4. If the answer is not clearly present, respond EXACTLY with:
+Instructions:
+1. Use ONLY the provided context.
+2. The context may contain structured data such as markdown tables.
+3. You may interpret tables by matching headers with row values.
+4. If multiple rows match the question, extract all relevant rows.
+5. When answering numeric questions, return the exact numbers as written.
+6. You may summarize structured or tabular data if clearly present.
+7. Do NOT use external knowledge.
+8. If the answer truly does not appear in the context, respond exactly with:
    "I do not know based on the provided documents."
-5. Preserve structured sections and include descriptive details when relevant.
 """
 
     user_message = f"""
@@ -231,6 +160,7 @@ Question:
     answer = call_llm(system_message, user_message)
 
     if answer.strip() == "I do not know based on the provided documents.":
+        logger.info("LLM returned strict unknown response.")
         return answer, []
 
     return answer, [

@@ -1,4 +1,4 @@
-# src/vector_store.py
+# src/embedding/vector_store.py
 
 import os
 import threading
@@ -6,7 +6,7 @@ import chromadb
 from chromadb.config import Settings
 from src.utils.logger import logger
 
-# Disable Chroma telemetry completely
+# Disable Chroma telemetry
 os.environ["CHROMA_TELEMETRY_ENABLED"] = "false"
 os.environ["ANONYMIZED_TELEMETRY"] = "false"
 

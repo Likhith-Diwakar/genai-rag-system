@@ -28,9 +28,11 @@ def main():
     tracker = TrackerDB()
     sqlite_store = SQLiteStore()
 
+    # ✅ Already filtered at source level
     docs = list_drive_documents()
 
     if not docs:
+        logger.info("No documents found in target folder.")
         return
 
     # ===============================
@@ -77,7 +79,9 @@ def main():
 
         try:
 
+            # -------------------------------
             # CSV → SQLite
+            # -------------------------------
             if mime_type == CSV_MIME:
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
@@ -93,11 +97,15 @@ def main():
                 tracker.mark_ingested(file_id, file_name)
                 continue
 
+            # -------------------------------
             # Google Doc
+            # -------------------------------
             if mime_type == GOOGLE_DOC_MIME:
                 text = extract_doc_text(file_id)
 
+            # -------------------------------
             # DOCX
+            # -------------------------------
             elif mime_type == DOCX_MIME:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
                     download_drive_file(file_id, tmp.name)
@@ -105,7 +113,9 @@ def main():
                 text = extract_docx_text(temp_path)
                 os.unlink(temp_path)
 
+            # -------------------------------
             # PDF
+            # -------------------------------
             elif mime_type == PDF_MIME:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     download_drive_file(file_id, tmp.name)
@@ -117,7 +127,7 @@ def main():
                 tracker.mark_ingested(file_id, file_name)
                 continue
 
-        except Exception as e:
+        except Exception:
             logger.warning(f"Extraction failed → {file_name}")
             tracker.mark_ingested(file_id, file_name)
             continue
@@ -127,7 +137,8 @@ def main():
             tracker.mark_ingested(file_id, file_name)
             continue
 
-        chunks = chunk_text(text)
+        # ✅ Pass mime type to chunker (important for PDF strategy)
+        chunks = chunk_text(text, mime_type=mime_type)
 
         if not chunks:
             logger.warning(f"No chunks created → {file_name}")
