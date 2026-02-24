@@ -42,44 +42,45 @@ def chunk_text(
         return chunks
 
     # --------------------------------------------------------
-    # PDF TABLE-AWARE STRATEGY
+    # PDF SMART TABLE GROUPING (Balanced)
     # --------------------------------------------------------
-    if mime_type == "application/pdf" and "--- TABLE" in text:
-        logger.info("Using PDF table-aware chunking strategy")
+    if mime_type == "application/pdf":
+        logger.info("Using balanced PDF chunking strategy")
 
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         chunks = []
 
-        sections = text.split("\n--- TABLE")
-        normal_text = sections[0].strip()
+        for para in paragraphs:
 
-        # First chunk normal paragraph text
-        if normal_text:
-            chunks.extend(_paragraph_chunk(normal_text, max_chars, overlap_chars))
+            lines = para.split("\n")
 
-        # Process each table separately
-        for table_section in sections[1:]:
-            table_section = "--- TABLE" + table_section
-            lines = [l.strip() for l in table_section.split("\n") if l.strip()]
+            numeric_line_count = 0
+            for line in lines:
+                numeric_tokens = [
+                    token for token in line.split()
+                    if token.replace(".", "", 1).isdigit()
+                ]
+                if len(numeric_tokens) >= 3:
+                    numeric_line_count += 1
 
-            if len(lines) < 2:
+            # If paragraph looks like a table block → keep entire block
+            if numeric_line_count >= 2:
+                chunks.append(para)
                 continue
 
-            header = lines[1]  # header row
-            header_cols = [h.strip() for h in header.split("|")]
+            # Otherwise use paragraph chunking logic
+            if len(para) > max_chars:
+                start = 0
+                while start < len(para):
+                    end = start + max_chars
+                    chunk = para[start:end].strip()
+                    if chunk:
+                        chunks.append(chunk)
+                    start = end - overlap_chars if overlap_chars > 0 else end
+            else:
+                chunks.append(para)
 
-            for row in lines[2:]:
-                row_cols = [c.strip() for c in row.split("|")]
-
-                if len(row_cols) != len(header_cols):
-                    continue
-
-                structured_row = []
-                for h, c in zip(header_cols, row_cols):
-                    structured_row.append(f"{h}: {c}")
-
-                chunks.append("\n".join(structured_row))
-
-        logger.info(f"Created {len(chunks)} PDF table-aware chunks")
+        logger.info(f"Created {len(chunks)} PDF chunks (balanced)")
         return chunks
 
     # --------------------------------------------------------

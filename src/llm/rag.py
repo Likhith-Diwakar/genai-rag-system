@@ -1,5 +1,3 @@
-# src/rag.py
-
 import os
 import re
 from dotenv import load_dotenv
@@ -36,7 +34,7 @@ def call_groq(model: str, system_message: str, user_message: str) -> str:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.1,
-            max_tokens=1500,
+            max_tokens=1200,
         )
 
         return completion.choices[0].message.content.strip()
@@ -85,67 +83,50 @@ def generate_answer(query: str, k: int = 5):
 
     logger.info(f"RAG query received: {query}")
 
-    # 🔥 Increased retrieval window for better recall
-    documents, metadatas, scores = query_vector_store(query, k=40)
+    # Smaller retrieval window (faster + cleaner)
+    documents, metadatas, scores = query_vector_store(query, k=15)
 
     if not documents:
         logger.warning("No documents retrieved from vector store.")
         return "I do not know based on the provided documents.", []
 
     # ==========================================================
-    # DOMINANT DOCUMENT SELECTION
+    # SORT BY SCORE
     # ==========================================================
 
-    highest_chunk_index = max(
-        range(len(scores)),
-        key=lambda i: scores[i]
-    )
+    combined = list(zip(documents, metadatas, scores))
+    combined.sort(key=lambda x: x[2], reverse=True)
 
-    dominant_file_id = metadatas[highest_chunk_index].get("file_id")
-
-    if not dominant_file_id:
-        logger.warning("Unable to determine dominant document.")
-        return "I do not know based on the provided documents.", []
-
-    dominant_file_name = metadatas[highest_chunk_index].get(
-        "file_name", "UNKNOWN"
-    )
-
-    logger.info(
-        f"Dominant document selected | file={dominant_file_name}"
-    )
-
-    # Collect chunks only from dominant file
-    dominant_chunks = [
-        (doc, meta, score)
-        for doc, meta, score in zip(documents, metadatas, scores)
-        if meta.get("file_id") == dominant_file_id
-    ]
-
-    # Sort by similarity score
-    dominant_chunks.sort(key=lambda x: x[2], reverse=True)
-
-    # Use top 8 chunks from dominant file
-    top_chunks = dominant_chunks[:8]
+    # Smaller context window (reduces noise)
+    top_k = 8
+    top_chunks = combined[:top_k]
 
     context = "\n\n".join([doc for doc, meta, score in top_chunks])
 
+    dominant_file_id = top_chunks[0][1].get("file_id")
+    dominant_file_name = top_chunks[0][1].get("file_name", "UNKNOWN")
+
+    logger.info(f"Top document contributing | file={dominant_file_name}")
+
     # ==========================================================
-    # TABLE-AWARE PROMPT
+    # PROMPT
     # ==========================================================
 
     system_message = """
-You are a factual Retrieval-Augmented Generation (RAG) assistant.
+You are a document question answering system.
+
+You must answer strictly using the provided context.
 
 Instructions:
-1. Use ONLY the provided context.
-2. The context may contain structured data such as markdown tables.
-3. You may interpret tables by matching headers with row values.
-4. If multiple rows match the question, extract all relevant rows.
-5. When answering numeric questions, return the exact numbers as written.
-6. You may summarize structured or tabular data if clearly present.
-7. Do NOT use external knowledge.
-8. If the answer truly does not appear in the context, respond exactly with:
+1. The context may contain normal text, structured tables, or numeric data.
+2. Carefully match headers with values when tables are present.
+3. Return exact numbers exactly as written.
+4. Return exact percentages exactly as written.
+5. If multiple values match, list them clearly.
+6. Perform arithmetic only if explicitly required.
+7. Do not hallucinate or use external knowledge.
+8. If the answer truly does not appear in the context,
+   respond exactly with:
    "I do not know based on the provided documents."
 """
 
@@ -155,12 +136,14 @@ Context:
 
 Question:
 {query}
+
+Answer:
 """
 
     answer = call_llm(system_message, user_message)
 
     if answer.strip() == "I do not know based on the provided documents.":
-        logger.info("LLM returned strict unknown response.")
+        logger.info("Model returned unknown response.")
         return answer, []
 
     return answer, [

@@ -6,9 +6,8 @@ import pandas as pd
 from pdf2image import convert_from_path
 from PIL import Image
 from src.utils.logger import logger
+from src.parsers.vision_extractor import run_vision_extraction
 
-
-# ================= CONFIG ================= #
 
 IMAGE_OUTPUT_DIR = "data/tmp/pdf_images"
 
@@ -16,27 +15,18 @@ MIN_IMAGE_WIDTH = 80
 MIN_IMAGE_HEIGHT = 80
 DIGITAL_TEXT_THRESHOLD = 50
 
-# ⚠️ SET THIS TO YOUR TESSERACT INSTALL PATH
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-
-# ================= HELPERS ================= #
 
 def _ensure_image_dir():
     os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 
 
 def _format_table(table):
-    """
-    Convert extracted table (list of lists) into:
-    1) Markdown table (LLM friendly)
-    2) Row-level semantic lines (header: value pairs)
-    """
     if not table or len(table) < 2:
         return ""
 
     try:
-        # First row as header
         header = [str(cell).strip() if cell else "" for cell in table[0]]
         rows = [
             [str(cell).strip() if cell else "" for cell in row]
@@ -47,11 +37,9 @@ def _format_table(table):
 
         output_blocks = []
 
-        # 1️⃣ Markdown table (preserves structure)
         markdown_table = df.to_markdown(index=False)
         output_blocks.append(markdown_table)
 
-        # 2️⃣ Row-level semantic serialization
         for _, row in df.iterrows():
             parts = []
             for col in df.columns:
@@ -64,7 +52,6 @@ def _format_table(table):
         return "\n".join(output_blocks)
 
     except Exception:
-        # Safe fallback (original behavior)
         lines = []
         for row in table:
             cleaned = [
@@ -107,8 +94,6 @@ def _extract_tables_with_fallback(page):
     return output_blocks
 
 
-# ================= MAIN ================= #
-
 def extract_pdf_text(path: str) -> str:
     logger.info(f"Extracting text + tables + OCR images from PDF: {path}")
 
@@ -120,21 +105,23 @@ def extract_pdf_text(path: str) -> str:
 
         for page_number, page in enumerate(pdf.pages, start=1):
 
+            # DEBUG: Count raster images
+            logger.info(f"Page {page_number} contains {len(page.images)} raster images")
+
             combined_output.append(f"\n\n===== PAGE {page_number} =====\n")
 
-            # 1️⃣ DIGITAL TEXT
             text = page.extract_text()
             if text:
                 combined_output.append(text)
 
-            # 2️⃣ STRUCTURED TABLE EXTRACTION
             table_blocks = _extract_tables_with_fallback(page)
             combined_output.extend(table_blocks)
 
-            # 3️⃣ IMAGE REGION OCR
             for img_index, img in enumerate(page.images, start=1):
 
                 try:
+                    logger.info(f"Processing image {img_index} on page {page_number}")
+
                     x0 = img.get("x0")
                     top = img.get("top")
                     x1 = img.get("x1")
@@ -160,20 +147,25 @@ def extract_pdf_text(path: str) -> str:
 
                     seen_hashes.add(img_hash)
 
-                    ocr_text = _run_ocr_on_pil(cropped)
+                    vision_text = run_vision_extraction(cropped)
 
-                    if ocr_text:
+                    if vision_text:
                         combined_output.append(
-                            f"\n[IMAGE OCR DATA {img_index}]\n{ocr_text}\n"
+                            f"\n[IMAGE VISION DATA {img_index}]\n{vision_text}\n"
                         )
+                    else:
+                        ocr_text = _run_ocr_on_pil(cropped)
+                        if ocr_text:
+                            combined_output.append(
+                                f"\n[IMAGE OCR DATA {img_index}]\n{ocr_text}\n"
+                            )
 
                 except Exception:
                     continue
 
-            # 4️⃣ FULL PAGE OCR (only if page is scanned)
             if not text or len(text) < DIGITAL_TEXT_THRESHOLD:
                 try:
-                    logger.info(f"Running full-page OCR on page {page_number}")
+                    logger.info(f"Running full-page vision extraction on page {page_number}")
 
                     images = convert_from_path(
                         path,
@@ -191,12 +183,18 @@ def extract_pdf_text(path: str) -> str:
                         if img_hash not in seen_hashes:
                             seen_hashes.add(img_hash)
 
-                            ocr_text = _run_ocr_on_pil(full_page_img)
+                            vision_text = run_vision_extraction(full_page_img)
 
-                            if ocr_text:
+                            if vision_text:
                                 combined_output.append(
-                                    f"\n[FULL PAGE OCR]\n{ocr_text}\n"
+                                    f"\n[FULL PAGE VISION DATA]\n{vision_text}\n"
                                 )
+                            else:
+                                ocr_text = _run_ocr_on_pil(full_page_img)
+                                if ocr_text:
+                                    combined_output.append(
+                                        f"\n[FULL PAGE OCR]\n{ocr_text}\n"
+                                    )
 
                 except Exception:
                     continue

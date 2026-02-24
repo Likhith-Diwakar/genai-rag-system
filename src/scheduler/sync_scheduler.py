@@ -30,29 +30,42 @@ from scripts.upload_backup_to_drive import upload_backup
 
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-SYNC_HOUR = 15
-SYNC_MINUTE = 5
+# Only ONE schedule time (for sync)
+SYNC_HOUR = 11
+SYNC_MINUTE = 20
 
-SQLITE_BACKUP_HOUR = 15
-SQLITE_BACKUP_MINUTE = 10
-
-CHROMA_BACKUP_HOUR = 15
-CHROMA_BACKUP_MINUTE = 15
+# Delay (in seconds) between steps
+STEP_DELAY_SECONDS = 180  # 3 minutes
 
 # ----------------------------------------------------------
-# JOBS
+# PIPELINE JOB (ORDER GUARANTEED)
 # ----------------------------------------------------------
 
-def run_drive_sync():
+def run_full_pipeline():
+    print("========================================")
+    print(f"[{datetime.now(TIMEZONE)}] Daily Pipeline Started")
+    print("========================================")
+
+    # ------------------------------------------------------
+    # STEP 1: DRIVE SYNC (MANDATORY)
+    # ------------------------------------------------------
+
     print(f"[{datetime.now(TIMEZONE)}] Starting Drive Sync...")
     try:
         run_sync(verbose=True)
         print(f"[{datetime.now(TIMEZONE)}] Drive Sync completed.")
     except Exception as e:
         print(f"[{datetime.now(TIMEZONE)}] Drive Sync failed: {e}")
+        print("Pipeline stopped. Backups will NOT run.")
+        return  # STOP PIPELINE
 
+    # ------------------------------------------------------
+    # STEP 2: SQLITE BACKUP (OPTIONAL CONTINUE)
+    # ------------------------------------------------------
 
-def run_sqlite_backup():
+    print(f"Waiting {STEP_DELAY_SECONDS} seconds before SQLite backup...")
+    time.sleep(STEP_DELAY_SECONDS)
+
     print(f"[{datetime.now(TIMEZONE)}] Starting SQLite Backup...")
     try:
         file_path = backup_sqlite()
@@ -60,9 +73,15 @@ def run_sqlite_backup():
         print(f"[{datetime.now(TIMEZONE)}] SQLite Backup completed.")
     except Exception as e:
         print(f"[{datetime.now(TIMEZONE)}] SQLite Backup failed: {e}")
+        print("Continuing to Chroma backup...")
 
+    # ------------------------------------------------------
+    # STEP 3: CHROMA BACKUP (ALWAYS AFTER SQLITE ATTEMPT)
+    # ------------------------------------------------------
 
-def run_chroma_backup():
+    print(f"Waiting {STEP_DELAY_SECONDS} seconds before Chroma backup...")
+    time.sleep(STEP_DELAY_SECONDS)
+
     print(f"[{datetime.now(TIMEZONE)}] Starting Chroma Backup...")
     try:
         file_path = backup_chroma()
@@ -70,6 +89,11 @@ def run_chroma_backup():
         print(f"[{datetime.now(TIMEZONE)}] Chroma Backup completed.")
     except Exception as e:
         print(f"[{datetime.now(TIMEZONE)}] Chroma Backup failed: {e}")
+
+    print("========================================")
+    print(f"[{datetime.now(TIMEZONE)}] Daily Pipeline Finished")
+    print("========================================")
+
 
 # ----------------------------------------------------------
 # START SCHEDULER
@@ -79,23 +103,9 @@ def start_scheduler():
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
 
     scheduler.add_job(
-        run_drive_sync,
+        run_full_pipeline,
         CronTrigger(hour=SYNC_HOUR, minute=SYNC_MINUTE),
-        id="drive_sync",
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        run_sqlite_backup,
-        CronTrigger(hour=SQLITE_BACKUP_HOUR, minute=SQLITE_BACKUP_MINUTE),
-        id="sqlite_backup",
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        run_chroma_backup,
-        CronTrigger(hour=CHROMA_BACKUP_HOUR, minute=CHROMA_BACKUP_MINUTE),
-        id="chroma_backup",
+        id="daily_pipeline",
         replace_existing=True,
     )
 
@@ -103,9 +113,8 @@ def start_scheduler():
 
     print("========================================")
     print("Scheduler Started (IST)")
-    print(f"Drive Sync    : {SYNC_HOUR:02d}:{SYNC_MINUTE:02d}")
-    print(f"SQLite Backup : {SQLITE_BACKUP_HOUR:02d}:{SQLITE_BACKUP_MINUTE:02d}")
-    print(f"Chroma Backup : {CHROMA_BACKUP_HOUR:02d}:{CHROMA_BACKUP_MINUTE:02d}")
+    print(f"Daily Pipeline Time : {SYNC_HOUR:02d}:{SYNC_MINUTE:02d}")
+    print("Order: Sync → SQLite → Chroma")
     print("========================================")
 
     try:

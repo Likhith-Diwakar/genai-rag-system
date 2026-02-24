@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer
 from src.utils.logger import logger
 import threading
 
-MODEL_NAME = "BAAI/bge-m3"
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 _model = None
 _model_lock = threading.Lock()
