@@ -1,7 +1,12 @@
 # GenAI RAG System  
 ## Design, Implementation & Architecture Overview
 
-A modular, multi-format, hybrid-reasoning Retrieval-Augmented Generation (RAG) system capable of ingesting structured and unstructured documents, performing format-aware chunking, generating semantic embeddings, and producing grounded responses using both structured computation and LLM-based reasoning.
+A modular, multi-format, hybrid-reasoning **Retrieval-Augmented Generation (RAG)** system capable of:
+
+- Ingesting structured and unstructured documents  
+- Performing format-aware chunking  
+- Generating semantic embeddings  
+- Producing grounded responses using both deterministic computation and LLM-based reasoning  
 
 ---
 
@@ -18,6 +23,7 @@ A modular, multi-format, hybrid-reasoning Retrieval-Augmented Generation (RAG) s
 - [Technical Stack](#technical-stack)
 - [Running the System](#running-the-system)
 - [Repository Status](#repository-status)
+- [System Characteristics](#system-characteristics)
 - [Next Phase](#next-phase)
 
 ---
@@ -28,14 +34,16 @@ This repository contains an advanced Retrieval-Augmented Generation (RAG) system
 
 - Structured documents (CSV)
 - Unstructured documents (PDF, DOCX)
-- PDFs containing scanned images
-- Tables embedded inside PDFs
-- Hybrid semantic + keyword retrieval
+- PDFs containing scanned pages
+- Embedded tables inside PDFs
+- Chart-heavy research papers
+- Hybrid semantic + lexical retrieval
 - Deterministic structured computation
+- Strict context-grounded generation
 
-The system has evolved into a modular architecture with persistent storage, hybrid reasoning, and strict document-grounded answer generation.
+The system is modular, extensible, ingestion-safe, and optimized for structured precision while maintaining strong semantic reasoning for unstructured content.
 
-The current implementation is stable and demo-ready via Streamlit.
+The current implementation is **stable and demo-ready via Streamlit**.
 
 ---
 
@@ -44,46 +52,60 @@ The current implementation is stable and demo-ready via Streamlit.
 ### End-to-End RAG Pipeline
 
 - Multi-format document ingestion
-- Format-aware extraction
-- Vision-based OCR for scanned PDFs
-- Adaptive chunking strategies
-- Semantic embeddings (lightweight optimized model)
+- Format-aware extraction logic
+- Vision-based OCR for scanned and image-heavy PDFs
+- Structured table-aware chunking
+- Adaptive chunk sizing
+- Lightweight semantic embeddings
 - Persistent vector storage (ChromaDB)
 - SQLite metadata + CSV structured storage
-- Hybrid semantic + keyword retrieval
-- Strict document-grounded generation
+- Hybrid semantic + lexical retrieval
+- Re-ranking with structural boosts
+- Strict document-grounded LLM prompting
 - Source attribution in UI
 
 ---
 
 ## Supported Input Formats
 
-| Format        | Extraction Method            | Chunking Strategy               | Reasoning Mode        |
-|--------------|-----------------------------|---------------------------------|-----------------------|
-| PDF (Text)  | pdfplumber                  | Balanced paragraph chunking     | LLM                   |
-| PDF (Scanned) | Vision API + OCR          | Balanced paragraph chunking     | LLM                   |
-| PDF Tables  | pdfplumber table extraction | Structured row-aware chunking   | LLM                   |
-| DOCX        | python-docx                 | Paragraph-based                 | LLM                   |
-| CSV         | Pandas                      | Stored in SQLite                | Deterministic + LLM   |
+| Format | Extraction Method | Chunking Strategy | Reasoning Mode |
+|--------|------------------|------------------|----------------|
+| PDF (Text-based) | pdfplumber | Balanced structural chunking | LLM |
+| PDF (Chart-heavy) | Full-page Vision extraction | Context-preserving chunking | LLM |
+| PDF (Scanned) | Vision API (OCR fallback) | Balanced paragraph chunking | LLM |
+| PDF Tables | pdfplumber table extraction | Row-aware contextual chunking | LLM |
+| DOCX | python-docx | Paragraph-based | LLM |
+| CSV | Pandas | SQLite structured storage | Deterministic + LLM |
 
 ---
 
 ## Vision + OCR Pipeline
 
-The system supports scanned PDFs via:
+The system intelligently detects when vision extraction is required.
 
-- Raster image detection per page
-- Vision model extraction
-- Structured table interpretation from images
-- OCR text normalization
-- Clean insertion into chunking pipeline
+### Trigger Conditions
 
-This enables answering questions from:
+- Chart-heavy pages (multiple embedded raster images)
+- Sparse digital text
+- Fully scanned documents
+- Large embedded graphical elements
 
-- Scanned research papers
-- Image-based tables
-- Graph screenshots
-- Embedded financial statements
+### Vision Strategy
+
+- Full-page conversion for chart-heavy pages
+- Per-image extraction when appropriate
+- Duplicate hash prevention
+- API call cap to avoid quota explosion
+- Structured text normalization
+- Markdown-style formatting for scanned tables
+
+### Enables Question Answering From
+
+- Research paper figures
+- Embedded statistical charts
+- Scanned certificates
+- Image-based tabular data
+- Visual placement diagrams
 
 ---
 
@@ -94,17 +116,25 @@ This enables answering questions from:
 For structured CSV queries:
 
 - Detects numeric intent (max, min, avg, sum, count)
-- Identifies numeric columns automatically
+- Dynamically identifies numeric columns
 - Uses Pandas for deterministic computation
-- Bypasses LLM when possible
-- Falls back to LLM when explanation is needed
+- Avoids hallucinated calculations
+- Falls back to LLM only for explanation
+
+### Structured PDF Tables
+
+- Preserves row integrity
+- Maintains contextual labels
+- Retains numeric and percentage alignment
+- Prevents cross-row contamination
+- Enables accurate numeric comparison queries
 
 ### Benefits
 
-- Zero hallucinated calculations
 - Deterministic numeric outputs
-- Faster response time
-- Clean reasoning separation
+- Reduced hallucinations
+- Improved precision in structured queries
+- Clear reasoning-mode separation
 
 ---
 
@@ -112,25 +142,33 @@ For structured CSV queries:
 
 The ingestion pipeline dynamically selects chunking strategies.
 
-### PDF (Balanced Strategy)
+### PDF Balanced Strategy
 
-- Larger chunk size
+- Larger context windows
 - Reduced fragmentation
 - Paragraph grouping
-- Table rows preserved as structured units
-- Reduced memory overhead
+- Table rows preserved as semantic units
+- Contextual metadata embedded inside structured blocks
+- Reduced vector noise
 
-### CSV
+### Chart-Heavy Strategy
 
-- Stored directly in SQLite
-- No vector embedding required for deterministic queries
+- Entire page processed via Vision
+- Avoids fragmented image chunking
+- Preserves chart context
 
-This significantly reduces:
+### CSV Strategy
 
-- Memory usage
-- Embedding time
-- Vector explosion
-- Cross-chunk contamination
+- Stored in SQLite
+- No embedding required for deterministic queries
+- Vector store used only when necessary
+
+### Reduces
+
+- Embedding overhead
+- Memory consumption
+- Context leakage
+- Retrieval ambiguity
 
 ---
 
@@ -140,21 +178,36 @@ The system uses:
 
 - SentenceTransformers embedding model (`bge-small-en-v1.5`)
 - Normalized embeddings
-- ChromaDB persistent vector store
-- Hybrid scoring:
-  - Semantic similarity
-  - Keyword overlap
-  - Re-ranking
-- Top-k context construction
-- Strict context-bounded LLM prompting
+- Persistent ChromaDB vector store
+
+### Hybrid Re-Ranking Signals
+
+- Semantic similarity
+- Keyword overlap
+- Exact phrase boost
+- Numeric alignment boost
+- Structured row density boost
+- Vision-content boost
+
+### LLM Layer
+
+- Top-k candidate expansion
+- Context-bound prompting
 - Deterministic temperature (0.1)
 
-### Results
+### Design Principles
+
+- No hardcoded entity rules
+- No document-specific tuning
+- Purely structural + semantic ranking signals
+- Stable multi-format behavior
+
+### Result
 
 - High grounding accuracy
-- Reduced hallucinations
 - Stable table retrieval
-- Clean multi-format performance
+- Reliable numeric responses
+- Reduced visual/text mixing errors
 
 ---
 
@@ -167,17 +220,19 @@ Input Sources (Drive / Local Files)
           │
    Format-Aware Extraction
           │
- Vision + OCR (if needed)
+ Vision Detection Layer
           │
- Balanced Chunking Strategy
+ Table-Aware Structuring
+          │
+ Adaptive Chunking
           │
  SentenceTransformer Embeddings
           │
  ChromaDB (Persistent Vector Store)
           │
- SQLite (CSV Structured Storage)
+ SQLite (Structured Data Engine)
           │
- Hybrid Retrieval Layer
+ Hybrid Retrieval + Re-ranking
           │
  Context Construction
           │
@@ -190,44 +245,45 @@ Input Sources (Drive / Local Files)
 
 ## Technical Stack
 
-| Component        | Technology                               |
-|-----------------|-------------------------------------------|
-| Language        | Python                                    |
-| PDF Extraction  | pdfplumber                                |
-| OCR             | Vision API                                |
-| DOCX Parsing    | python-docx                               |
-| Structured Data | Pandas                                    |
-| Embeddings      | sentence-transformers (bge-small-en-v1.5) |
-| Vector Store    | ChromaDB                                  |
-| Metadata Store  | SQLite                                    |
-| LLM Backend     | Groq (LLaMA 3.x variants)                 |
-| Frontend        | Streamlit                                 |
+| Component | Technology |
+|-----------|------------|
+| Language | Python |
+| PDF Extraction | pdfplumber |
+| Vision/OCR | Vision API |
+| DOCX Parsing | python-docx |
+| Structured Data | Pandas |
+| Embeddings | sentence-transformers (bge-small-en-v1.5) |
+| Vector Store | ChromaDB |
+| Metadata Store | SQLite |
+| LLM Backend | Groq (LLaMA 3.x variants) |
+| Frontend | Streamlit |
 
 ---
 
 ## Running the System
 
-### 1. Install Dependencies
+### 1️⃣ Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Set Environment Variables
+### 2️⃣ Set Environment Variables
 
 Create a `.env` file:
 
 ```
 GROQ_API_KEY=your_key_here
+POPPLER_PATH=optional_windows_path_if_needed
 ```
 
-### 3. Ingest Documents
+### 3️⃣ Ingest Documents
 
 ```bash
 python -m src.ingestion.main
 ```
 
-### 4. Launch UI
+### 4️⃣ Launch UI
 
 ```bash
 streamlit run scripts/app.py
@@ -246,32 +302,45 @@ http://localhost:8501
 ### Stable
 
 - Multi-format ingestion
-- Vision-based OCR for scanned PDFs
-- Balanced PDF chunking
+- Vision-based OCR
+- Chart-heavy page detection
+- Structured PDF table preservation
 - Deterministic CSV computation
-- Hybrid retrieval
+- Hybrid semantic + lexical retrieval
 - Strict document-grounded generation
 - Persistent vector storage
-- Streamlit demo working
+- Streamlit demo operational
 
 ### Optimized
 
-- Reduced embedding overhead
-- Lightweight embedding model
+- Reduced embedding explosion
+- Controlled re-ranking candidate pool
+- Context-length balancing
+- Duplicate vision detection
 - Memory-stable ingestion
-- Faster embedding cycle
-- Clean retrieval scoring
+- Improved structured row disambiguation
+
+---
+
+## System Characteristics
+
+- No document-specific hardcoding
+- No entity-level rule injection
+- Fully data-driven ranking
+- Deterministic numeric reasoning
+- Vision-aware but quota-controlled
+- Production-extensible architecture
 
 ---
 
 ## Next Phase
 
 - FastAPI backend migration
-- API-first architecture
-- Scheduled ingestion
-- Cloud deployment (Render / Railway / etc.)
+- API-first microservice architecture
+- Scheduled background ingestion
 - Docker containerization
-- LLM abstraction layer
+- Cloud deployment (Render / Railway / etc.)
 - Background ingestion workers
-- Production logging cleanup
+- LLM abstraction layer
 - Observability & monitoring
+- Production logging cleanup
