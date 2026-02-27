@@ -1,19 +1,20 @@
+# src/ingestion/main.py
+
 import os
 import tempfile
+import pandas as pd
 
 from src.ingestion.list_docs import list_drive_documents
-from src.parsers.extract_text import extract_doc_text
-from src.parsers.extract_docx import extract_docx_text
-from src.parsers.extract_pdf import extract_pdf_text
 from src.ingestion.download_file import download_drive_file
-from src.chunking.chunker import chunk_text
-from src.embedding.embeddings import embed_texts
-from src.embedding.vector_store import VectorStore
+
+from src.providers.parsers.parser_router import ParserRouter
+from src.providers.embeddings.bge_embedder import BGEEmbedder
+from src.providers.vectorstores.chroma_store import ChromaVectorStore
+from src.providers.chunking.chunking_router import ChunkingRouter
+
 from src.storage.tracker_db import TrackerDB
 from src.storage.sqlite_store import SQLiteStore
 from src.utils.logger import logger
-
-import pandas as pd
 
 
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
@@ -24,11 +25,13 @@ CSV_MIME = "text/csv"
 
 def main():
 
-    store = VectorStore()
+    vector_store = ChromaVectorStore()
+    embedder = BGEEmbedder()
     tracker = TrackerDB()
     sqlite_store = SQLiteStore()
+    parser_router = ParserRouter()
+    chunk_router = ChunkingRouter()
 
-    # ✅ Already filtered at source level
     docs = list_drive_documents()
 
     if not docs:
@@ -50,7 +53,7 @@ def main():
 
         logger.info(f"File deleted from Drive → {file_name}")
 
-        store.delete_by_file_id(file_id)
+        vector_store.delete_by_file_id(file_id)
 
         if file_name:
             try:
@@ -80,47 +83,35 @@ def main():
         try:
 
             # -------------------------------
-            # CSV → SQLite
+            # CSV → SQLite (special case)
             # -------------------------------
             if mime_type == CSV_MIME:
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-                    download_drive_file(file_id, tmp.name)
-                    temp_path = tmp.name
-
-                try:
-                    df = pd.read_csv(temp_path)
-                    sqlite_store.store_dataframe(file_name, df)
-                finally:
-                    os.unlink(temp_path)
+                parser = parser_router.route(file_name)
+                parser.parse(file_id, file_name)
 
                 tracker.mark_ingested(file_id, file_name)
                 continue
 
             # -------------------------------
-            # Google Doc
+            # Google Docs
             # -------------------------------
             if mime_type == GOOGLE_DOC_MIME:
-                text = extract_doc_text(file_id)
+                parser = parser_router.route(file_name)
+                text = parser.parse(file_id)
 
             # -------------------------------
-            # DOCX
+            # DOCX / PDF
             # -------------------------------
-            elif mime_type == DOCX_MIME:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-                    download_drive_file(file_id, tmp.name)
-                    temp_path = tmp.name
-                text = extract_docx_text(temp_path)
-                os.unlink(temp_path)
+            elif mime_type in [DOCX_MIME, PDF_MIME]:
 
-            # -------------------------------
-            # PDF
-            # -------------------------------
-            elif mime_type == PDF_MIME:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                with tempfile.NamedTemporaryFile(delete=False) as tmp:
                     download_drive_file(file_id, tmp.name)
                     temp_path = tmp.name
-                text = extract_pdf_text(temp_path)
+
+                parser = parser_router.route(file_name)
+                text = parser.parse(temp_path)
+
                 os.unlink(temp_path)
 
             else:
@@ -137,15 +128,23 @@ def main():
             tracker.mark_ingested(file_id, file_name)
             continue
 
-        # ✅ Pass mime type to chunker (important for PDF strategy)
-        chunks = chunk_text(text, mime_type=mime_type)
+        # -------------------------------
+        # Chunking (MODULAR)
+        # -------------------------------
+
+        chunker = chunk_router.route(mime_type)
+        chunks = chunker.chunk(text)
 
         if not chunks:
             logger.warning(f"No chunks created → {file_name}")
             tracker.mark_ingested(file_id, file_name)
             continue
 
-        embeddings = embed_texts(chunks)
+        # -------------------------------
+        # Embedding
+        # -------------------------------
+
+        embeddings = embedder.embed(chunks)
 
         ids = [f"{file_id}_{i}" for i in range(len(chunks))]
         metadatas = [
@@ -157,7 +156,7 @@ def main():
             for i in range(len(chunks))
         ]
 
-        store.add_chunks(
+        vector_store.add_chunks(
             embeddings=embeddings,
             documents=chunks,
             metadatas=metadatas,

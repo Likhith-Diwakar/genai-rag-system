@@ -1,77 +1,17 @@
-import os
-import re
-from dotenv import load_dotenv
-from groq import Groq, RateLimitError
-from src.llm.query import query_vector_store
+# src/llm/rag.py
+
+from src.providers.llm.groq_llm import GroqLLM
+from src.providers.retrievers.hybrid_retriever import HybridRetriever
 from src.utils.logger import logger
 
-load_dotenv()
-
-PRIMARY_MODEL = "llama-3.3-70b-versatile"
-FALLBACK_MODEL = "llama-3.1-8b-instant"
-
-api_key = os.getenv("GROQ_API_KEY")
-
-if not api_key:
-    raise ValueError("GROQ_API_KEY not found. Check your .env file.")
-
-client = Groq(api_key=api_key)
-
-
-# ==========================================================
-# LLM CALLING LAYER
-# ==========================================================
-
-def call_groq(model: str, system_message: str, user_message: str) -> str:
-    try:
-        logger.info(f"Calling Groq | model={model}")
-
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=0.1,
-            max_tokens=600,
-        )
-
-        return completion.choices[0].message.content.strip()
-
-    except RateLimitError:
-        logger.warning(f"Rate limit reached for model={model}")
-        return ""
-
-    except Exception as e:
-        logger.error(f"Groq error for model={model}: {e}")
-        return ""
-
-
-def call_llm(system_message: str, user_message: str) -> str:
-    answer = call_groq(PRIMARY_MODEL, system_message, user_message)
-
-    if answer:
-        return answer
-
-    logger.info("Primary model unavailable. Falling back.")
-
-    answer = call_groq(FALLBACK_MODEL, system_message, user_message)
-
-    if answer:
-        return answer
-
-    return "I do not know based on the provided documents."
-
-
-# ==========================================================
-# MAIN RAG PIPELINE (ZERO DOMAIN HARDCODING)
-# ==========================================================
 
 def generate_answer(query: str, k: int = 7):
 
     logger.info(f"RAG query received: {query}")
 
-    documents, metadatas, scores = query_vector_store(query, k=k)
+    # ✅ Use modular retriever
+    retriever = HybridRetriever()
+    documents, metadatas, scores = retriever.retrieve(query, k)
 
     if not documents:
         logger.warning("No documents retrieved from vector store.")
@@ -80,26 +20,12 @@ def generate_answer(query: str, k: int = 7):
     combined = list(zip(documents, metadatas, scores))
     combined.sort(key=lambda x: x[2], reverse=True)
 
-    # ---------------------------------------------
-    # STRUCTURE-AWARE FILTERING (NOT DOMAIN AWARE)
-    # ---------------------------------------------
-    #
-    # If the highest-ranked chunks are structured rows,
-    # prioritize structured chunks.
-    # Otherwise use normal chunks.
-    #
-    # No keyword logic.
-    # No entity narrowing.
-    # No domain assumptions.
-    #
-    # ---------------------------------------------
-
+    # Structure-aware filtering
     structured_chunks = [
         item for item in combined
         if "TABLE_ROW_START" in item[0]
     ]
 
-    # If majority of top results are structured, prefer them
     if structured_chunks:
         logger.info("Structured table rows detected in retrieval. Prioritizing structured chunks.")
         combined = structured_chunks
@@ -108,10 +34,7 @@ def generate_answer(query: str, k: int = 7):
         logger.warning("No relevant chunks after filtering.")
         return "I do not know based on the provided documents.", []
 
-    # ---------------------------------------------
-    # Context control (token efficiency)
-    # ---------------------------------------------
-
+    # Context control
     top_k = 5
     top_chunks = combined[:top_k]
 
@@ -133,10 +56,6 @@ def generate_answer(query: str, k: int = 7):
 
     logger.info(f"Top document contributing | file={dominant_file_name}")
     logger.info(f"Context length: {len(context)} chars from {len(context_parts)} chunk(s)")
-
-    # ---------------------------------------------
-    # Prompt
-    # ---------------------------------------------
 
     system_message = """
 You are a document question answering system.
@@ -166,7 +85,8 @@ Question:
 Answer in a complete sentence:
 """
 
-    answer = call_llm(system_message, user_message)
+    llm = GroqLLM()
+    answer = llm.generate(system_message, user_message)
 
     if not answer.strip() or answer.strip() == "I do not know based on the provided documents.":
         logger.info("LLM could not find answer in provided context.")

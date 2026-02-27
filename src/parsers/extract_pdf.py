@@ -15,7 +15,7 @@ MIN_IMAGE_WIDTH = 80
 MIN_IMAGE_HEIGHT = 80
 DIGITAL_TEXT_THRESHOLD = 200
 
-# 🔥 Safety cap to prevent quota explosion
+#  Safety cap to prevent quota explosion
 MAX_VISION_CALLS_PER_DOC = 5
 
 # -------------------------------------------------------

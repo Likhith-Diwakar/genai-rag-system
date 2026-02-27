@@ -1,12 +1,17 @@
-from src.llm.rag import call_llm
+# src/llm/structure.py
+
+from src.providers.llm.groq_llm import GroqLLM
 from src.utils.logger import logger
+
+# Initialize once (cleaner, avoids repeated instantiation)
+_llm = GroqLLM()
 
 
 def structure_table_text(raw_text: str) -> str:
     """
     Takes OCR extracted table text
     and converts it into clean structured table
-    using Groq Llama model.
+    using Groq LLM.
     Only called when table-like content is detected.
     """
 
@@ -31,4 +36,4 @@ OCR TABLE TEXT:
 {raw_text}
 """
 
-    return call_llm(system_message, user_message)
+    return _llm.generate(system_message, user_message)
