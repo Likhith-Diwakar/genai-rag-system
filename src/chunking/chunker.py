@@ -1,7 +1,6 @@
-# src/chunker.py
-
 from typing import List
 from src.utils.logger import logger
+import re
 
 
 def chunk_text(
@@ -42,33 +41,39 @@ def chunk_text(
         return chunks
 
     # --------------------------------------------------------
-    # PDF SMART TABLE GROUPING (Balanced)
+    # STRUCTURALLY SAFE PDF STRATEGY (FIXED)
     # --------------------------------------------------------
     if mime_type == "application/pdf":
-        logger.info("Using balanced PDF chunking strategy")
+        logger.info("Using structurally safe PDF chunking strategy")
 
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         chunks = []
+
+        # 1️⃣ Extract TABLE_ROW blocks using actual markers
+        table_pattern = re.compile(
+            r"TABLE_ID\s*=\s*.*?\nTABLE_ROW_START.*?TABLE_ROW_END",
+            re.DOTALL
+        )
+
+        table_blocks = table_pattern.findall(text)
+
+        # Add each table row as atomic chunk
+        for block in table_blocks:
+            cleaned = block.strip()
+            if cleaned:
+                chunks.append(cleaned)
+
+        # 2️⃣ Remove table blocks from main text
+        text_without_tables = table_pattern.sub("", text)
+
+        # 3️⃣ Chunk remaining narrative text normally
+        paragraphs = [
+            p.strip()
+            for p in text_without_tables.split("\n\n")
+            if p.strip()
+        ]
 
         for para in paragraphs:
 
-            lines = para.split("\n")
-
-            numeric_line_count = 0
-            for line in lines:
-                numeric_tokens = [
-                    token for token in line.split()
-                    if token.replace(".", "", 1).isdigit()
-                ]
-                if len(numeric_tokens) >= 3:
-                    numeric_line_count += 1
-
-            # If paragraph looks like a table block → keep entire block
-            if numeric_line_count >= 2:
-                chunks.append(para)
-                continue
-
-            # Otherwise use paragraph chunking logic
             if len(para) > max_chars:
                 start = 0
                 while start < len(para):
@@ -80,7 +85,7 @@ def chunk_text(
             else:
                 chunks.append(para)
 
-        logger.info(f"Created {len(chunks)} PDF chunks (balanced)")
+        logger.info(f"Created {len(chunks)} PDF chunks (structurally safe)")
         return chunks
 
     # --------------------------------------------------------

@@ -1,114 +1,145 @@
 import os
-import base64
-import requests
-from io import BytesIO
 from PIL import Image
 from dotenv import load_dotenv
 from src.utils.logger import logger
+from google import genai
+from google.genai.types import GenerateContentConfig
 
 
-# Load environment variables
+# --------------------------------------------------
+# Load environment
+# --------------------------------------------------
 load_dotenv()
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+MODEL_NAME = "models/gemini-2.5-flash"
 
-# Correct OpenRouter Vision model
-VISION_MODEL = "qwen/qwen-2-vl-7b-instruct"
+client = None
+if GEMINI_API_KEY:
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        logger.info(f"Gemini client initialized | model={MODEL_NAME}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Gemini client: {e}")
 
+
+# --------------------------------------------------
+# Strong structured extraction prompt
+# --------------------------------------------------
 STRUCTURED_PROMPT = """
-Extract all visible textual data from this image.
+You are an advanced document vision extraction system.
 
-If this is a table:
-- Return a clean markdown table.
-- Preserve headers and structure.
-- Preserve numeric values exactly.
+Your task:
+Extract ALL visible structured and textual information exactly as shown.
 
-If this is a chart or graph:
-- Extract:
-    - Chart title
-    - Axis labels
-    - Legend entries
-    - Data values per category
-- Preserve numeric values exactly.
-- Maintain logical reading order.
+STRICT RULES:
+- Do NOT summarize.
+- Do NOT interpret.
+- Do NOT estimate missing values.
+- Do NOT calculate anything.
+- Preserve numeric values EXACTLY as written.
+- Preserve percentages EXACTLY as written.
 
-Return only extracted structured content.
+IF THE IMAGE CONTAINS A TABLE:
+- Reconstruct it as a clean markdown table.
+- Preserve headers exactly.
+- Preserve row/column alignment.
+- Do not merge rows.
+- Do not remove columns.
+- Return ONLY the markdown table.
+
+IF THE IMAGE CONTAINS A CHART OR GRAPH:
+Extract in this format:
+
+CHART_TITLE: <title if visible>
+
+X_AXIS_LABEL: <label if visible>
+Y_AXIS_LABEL: <label if visible>
+
+LEGEND:
+- <legend item 1>
+- <legend item 2>
+
+DATA_POINTS:
+- <label> : <value>
+- <label> : <value>
+
+Preserve all numeric values exactly.
+
+IF THE IMAGE CONTAINS SCANNED TEXT:
+- Return exact transcription.
+- Maintain reading order.
+
+Return ONLY extracted structured content.
 """
 
 
-def _pil_to_base64(pil_image: Image.Image) -> str:
-    buffered = BytesIO()
-    pil_image.save(buffered, format="PNG")
-    img_bytes = buffered.getvalue()
-    return base64.b64encode(img_bytes).decode("utf-8")
+# --------------------------------------------------
+# Optional image optimization
+# --------------------------------------------------
+def _optimize_image(pil_image: Image.Image) -> Image.Image:
+    max_dimension = 1600
+
+    width, height = pil_image.size
+
+    if max(width, height) > max_dimension:
+        ratio = max_dimension / float(max(width, height))
+        new_size = (int(width * ratio), int(height * ratio))
+        pil_image = pil_image.resize(new_size, Image.LANCZOS)
+
+    return pil_image
 
 
+# --------------------------------------------------
+# Vision extraction
+# --------------------------------------------------
 def run_vision_extraction(pil_image: Image.Image) -> str:
-    if not OPENROUTER_API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set.")
+
+    if not GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set. Skipping vision extraction.")
+        return ""
+
+    if not client:
+        logger.warning("Gemini client not initialized. Skipping vision extraction.")
         return ""
 
     try:
-        logger.info("Calling Vision API for image extraction...")
+        logger.info("Calling Gemini Vision API...")
 
-        image_base64 = _pil_to_base64(pil_image)
+        optimized_image = _optimize_image(pil_image)
 
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost",
-            "X-Title": "genai-rag-system"
-        }
-
-        payload = {
-            "model": VISION_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": STRUCTURED_PROMPT
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            "temperature": 0,
-            "max_tokens": 2048
-        }
-
-        response = requests.post(
-            OPENROUTER_URL,
-            headers=headers,
-            json=payload,
-            timeout=90
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[STRUCTURED_PROMPT, optimized_image],
+            config=GenerateContentConfig(
+                temperature=0,   # deterministic output
+                # top_p intentionally omitted — top_p=0.0 can cause API errors
+                # temperature=0 already ensures determinism
+            ),
         )
 
-        if response.status_code != 200:
-            logger.error(
-                f"Vision API error: {response.status_code} - {response.text}"
-            )
+        if not response:
+            logger.warning("Gemini returned no response object.")
             return ""
 
-        data = response.json()
+        text_output = getattr(response, "text", None)
 
-        if "choices" not in data or not data["choices"]:
-            logger.error(f"Unexpected Vision API response format: {data}")
+        if not text_output:
+            # Log full response for debugging when text is empty
+            logger.warning(f"Gemini returned empty text. Full response: {response}")
             return ""
 
-        content = data["choices"][0]["message"]["content"]
+        cleaned = text_output.strip()
 
-        logger.info("Vision extraction successful.")
-        return content.strip()
+        # Safety: prevent useless hallucinated filler
+        if len(cleaned) < 5:
+            logger.warning(f"Gemini output too short (len={len(cleaned)}), discarding.")
+            return ""
+
+        logger.info(f"Gemini extraction successful. Output length: {len(cleaned)} chars")
+        return cleaned
 
     except Exception as e:
-        logger.error(f"Vision extraction failed: {e}")
+        logger.error(f"Gemini vision extraction failed: {e}")
         return ""
