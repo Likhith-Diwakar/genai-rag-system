@@ -1,12 +1,19 @@
-# GenAI RAG System  
+# GenAI RAG System
 ## Design, Implementation & Architecture Overview
 
-A modular, multi-format, hybrid-reasoning **Retrieval-Augmented Generation (RAG)** system capable of:
+A modular, multi-format, hybrid-reasoning **Retrieval-Augmented Generation (RAG)** system designed for structured precision and reliable document-grounded responses.
 
-- Ingesting structured and unstructured documents  
-- Performing format-aware chunking  
-- Generating semantic embeddings  
-- Producing grounded responses using both deterministic computation and LLM-based reasoning  
+The system supports:
+
+- Multi-format ingestion (PDF, DOCX, CSV)
+- Vision-based extraction for scanned and chart-heavy PDFs
+- Format-aware adaptive chunking
+- Lightweight semantic embeddings
+- Deterministic structured computation
+- Hybrid retrieval and structural re-ranking
+- Automated persistence and synchronization
+
+The architecture is modular, ingestion-safe, production-extensible, and optimized for grounding accuracy.
 
 ---
 
@@ -19,6 +26,7 @@ A modular, multi-format, hybrid-reasoning **Retrieval-Augmented Generation (RAG)
 - [Hybrid Structured + LLM Reasoning](#hybrid-structured--llm-reasoning)
 - [Format-Aware Adaptive Chunking](#format-aware-adaptive-chunking)
 - [Retrieval & Ranking Architecture](#retrieval--ranking-architecture)
+- [Automation & Persistence Layer](#automation--persistence-layer)
 - [High-Level Architecture](#high-level-architecture)
 - [Technical Stack](#technical-stack)
 - [Running the System](#running-the-system)
@@ -30,18 +38,24 @@ A modular, multi-format, hybrid-reasoning **Retrieval-Augmented Generation (RAG)
 
 ## Overview
 
-This repository contains an advanced Retrieval-Augmented Generation (RAG) system designed to handle:
+This repository contains an advanced Retrieval-Augmented Generation (RAG) system capable of handling:
 
 - Structured documents (CSV)
 - Unstructured documents (PDF, DOCX)
-- PDFs containing scanned pages
+- Scanned PDFs
 - Embedded tables inside PDFs
-- Chart-heavy research papers
+- Chart-heavy research documents
 - Hybrid semantic + lexical retrieval
-- Deterministic structured computation
-- Strict context-grounded generation
+- Deterministic structured numeric computation
+- Strict context-grounded answer generation
 
-The system is modular, extensible, ingestion-safe, and optimized for structured precision while maintaining strong semantic reasoning for unstructured content.
+The system separates responsibilities cleanly between:
+
+- Vision extraction
+- Embedding layer
+- Deterministic numeric reasoning
+- LLM-based semantic reasoning
+- Automated persistence and backup
 
 The current implementation is **stable and demo-ready via Streamlit**.
 
@@ -56,12 +70,13 @@ The current implementation is **stable and demo-ready via Streamlit**.
 - Vision-based OCR for scanned and image-heavy PDFs
 - Structured table-aware chunking
 - Adaptive chunk sizing
-- Lightweight semantic embeddings
+- Lightweight semantic embeddings (`bge-small-en-v1.5`)
 - Persistent vector storage (ChromaDB)
-- SQLite metadata + CSV structured storage
+- SQLite metadata + structured storage
 - Hybrid semantic + lexical retrieval
-- Re-ranking with structural boosts
-- Strict document-grounded LLM prompting
+- Structural re-ranking boosts
+- Deterministic CSV computation engine
+- Strict document-grounded prompting
 - Source attribution in UI
 
 ---
@@ -69,10 +84,10 @@ The current implementation is **stable and demo-ready via Streamlit**.
 ## Supported Input Formats
 
 | Format | Extraction Method | Chunking Strategy | Reasoning Mode |
-|--------|------------------|------------------|----------------|
+|--------|------------------|-------------------|----------------|
 | PDF (Text-based) | pdfplumber | Balanced structural chunking | LLM |
-| PDF (Chart-heavy) | Full-page Vision extraction | Context-preserving chunking | LLM |
-| PDF (Scanned) | Vision API (OCR fallback) | Balanced paragraph chunking | LLM |
+| PDF (Chart-heavy) | Gemini 2.5 Flash Vision | Context-preserving chunking | LLM |
+| PDF (Scanned) | Gemini 2.5 Flash Vision OCR | Balanced paragraph chunking | LLM |
 | PDF Tables | pdfplumber table extraction | Row-aware contextual chunking | LLM |
 | DOCX | python-docx | Paragraph-based | LLM |
 | CSV | Pandas | SQLite structured storage | Deterministic + LLM |
@@ -81,31 +96,35 @@ The current implementation is **stable and demo-ready via Streamlit**.
 
 ## Vision + OCR Pipeline
 
-The system intelligently detects when vision extraction is required.
+The system detects when vision-based extraction is required.
 
 ### Trigger Conditions
 
-- Chart-heavy pages (multiple embedded raster images)
+- Chart-heavy pages (multiple raster images)
 - Sparse digital text
 - Fully scanned documents
-- Large embedded graphical elements
+- Large graphical elements
+- Embedded image-based tables
 
 ### Vision Strategy
 
 - Full-page conversion for chart-heavy pages
+- Gemini 2.5 Flash Vision for OCR and structured extraction
 - Per-image extraction when appropriate
-- Duplicate hash prevention
-- API call cap to avoid quota explosion
-- Structured text normalization
-- Markdown-style formatting for scanned tables
+- Duplicate page hash prevention
+- API call cap to control quota usage
+- Structured normalization of extracted text
+- Markdown-style reconstruction for tables
 
-### Enables Question Answering From
+### Enables Accurate Extraction From
 
 - Research paper figures
-- Embedded statistical charts
-- Scanned certificates
-- Image-based tabular data
-- Visual placement diagrams
+- Financial charts
+- Image-based tables
+- Scanned reports
+- Graphical statistical data
+
+> **Note:** Vision is used strictly for ingestion and extraction, not for main RAG reasoning.
 
 ---
 
@@ -118,23 +137,23 @@ For structured CSV queries:
 - Detects numeric intent (max, min, avg, sum, count)
 - Dynamically identifies numeric columns
 - Uses Pandas for deterministic computation
-- Avoids hallucinated calculations
-- Falls back to LLM only for explanation
+- Bypasses LLM for numeric calculation
+- Uses LLM only for explanation
 
 ### Structured PDF Tables
 
 - Preserves row integrity
-- Maintains contextual labels
-- Retains numeric and percentage alignment
+- Maintains contextual entity labels
 - Prevents cross-row contamination
-- Enables accurate numeric comparison queries
+- Maintains numeric alignment
+- Supports accurate numeric comparisons
 
 ### Benefits
 
 - Deterministic numeric outputs
 - Reduced hallucinations
-- Improved precision in structured queries
-- Clear reasoning-mode separation
+- Precision in structured queries
+- Clean reasoning-mode separation
 
 ---
 
@@ -148,20 +167,20 @@ The ingestion pipeline dynamically selects chunking strategies.
 - Reduced fragmentation
 - Paragraph grouping
 - Table rows preserved as semantic units
-- Contextual metadata embedded inside structured blocks
+- Metadata embedded inside structured blocks
 - Reduced vector noise
 
 ### Chart-Heavy Strategy
 
-- Entire page processed via Vision
-- Avoids fragmented image chunking
-- Preserves chart context
+- Entire page processed via Vision layer
+- Prevents fragmented image chunking
+- Preserves visual context
 
 ### CSV Strategy
 
-- Stored in SQLite
-- No embedding required for deterministic queries
-- Vector store used only when necessary
+- Stored directly in SQLite
+- No embeddings required for deterministic numeric queries
+- Vector store used only when semantic retrieval is required
 
 ### Reduces
 
@@ -176,7 +195,7 @@ The ingestion pipeline dynamically selects chunking strategies.
 
 The system uses:
 
-- SentenceTransformers embedding model (`bge-small-en-v1.5`)
+- SentenceTransformers (`bge-small-en-v1.5`)
 - Normalized embeddings
 - Persistent ChromaDB vector store
 
@@ -187,56 +206,83 @@ The system uses:
 - Exact phrase boost
 - Numeric alignment boost
 - Structured row density boost
-- Vision-content boost
+- Table integrity scoring
+- Vision-content priority boost
 
 ### LLM Layer
 
-- Top-k candidate expansion
-- Context-bound prompting
+**Primary Model:** `llama-3.3-70b-versatile`  
+**Fallback Model:** `llama-3.1-8b-instant`  
+Both served via **Groq**.
+
+### LLM Behavior
+
+- Strict context-bound prompting
 - Deterministic temperature (0.1)
-
-### Design Principles
-
-- No hardcoded entity rules
-- No document-specific tuning
-- Purely structural + semantic ranking signals
-- Stable multi-format behavior
+- No document-specific hardcoding
+- No entity rule injection
 
 ### Result
 
 - High grounding accuracy
-- Stable table retrieval
+- Stable structured retrieval
 - Reliable numeric responses
-- Reduced visual/text mixing errors
+- Reduced hallucination risk
+
+---
+
+## Automation & Persistence Layer
+
+The system includes automated synchronization and backup mechanisms.
+
+### APScheduler Jobs
+
+- Daily Google Drive ingestion sync
+- Scheduled vector backup
+- Scheduled metadata backup
+
+### Persistence Strategy
+
+- SQLite → Pickle serialization → Google Drive
+- ChromaDB → tar.gz compression → Google Drive
+- Controlled rehydration on restart
+
+### Benefits
+
+- Crash recovery safety
+- State durability
+- Low-cost persistence
+- Cloud-ready architecture
+- Production-aligned reliability
 
 ---
 
 ## High-Level Architecture
 
 ```
-Input Sources (Drive / Local Files)
+Input Sources (Google Drive / Azure / Local)
           │
    Controlled Ingestion
           │
    Format-Aware Extraction
           │
- Vision Detection Layer
-          │
- Table-Aware Structuring
+ Gemini Vision Layer (OCR + Tables)
           │
  Adaptive Chunking
           │
- SentenceTransformer Embeddings
+ bge-small Embeddings
           │
- ChromaDB (Persistent Vector Store)
+ ChromaDB (Vector Store)
           │
- SQLite (Structured Data Engine)
+ SQLite (Structured + Metadata)
           │
- Hybrid Retrieval + Re-ranking
+ Hybrid Retrieval + Structural Re-Ranking
           │
- Context Construction
+ Deterministic Engine (Pandas for CSV)
           │
- Groq LLM (Primary + Fallback)
+ Groq Llama 3.3 (Primary)
+          │
+ Groq Llama 3.1 (Fallback)
           │
  Streamlit Interface
 ```
@@ -249,13 +295,17 @@ Input Sources (Drive / Local Files)
 |-----------|------------|
 | Language | Python |
 | PDF Extraction | pdfplumber |
-| Vision/OCR | Vision API |
+| Vision/OCR | Gemini 2.5 Flash (Vision) |
 | DOCX Parsing | python-docx |
 | Structured Data | Pandas |
-| Embeddings | sentence-transformers (bge-small-en-v1.5) |
+| Embeddings | sentence-transformers (`bge-small-en-v1.5`) |
 | Vector Store | ChromaDB |
 | Metadata Store | SQLite |
-| LLM Backend | Groq (LLaMA 3.x variants) |
+| LLM Backend | Groq |
+| Primary Model | `llama-3.3-70b-versatile` |
+| Fallback Model | `llama-3.1-8b-instant` |
+| Scheduler | APScheduler |
+| Persistence | Google Drive Backups |
 | Frontend | Streamlit |
 
 ---
@@ -274,6 +324,7 @@ Create a `.env` file:
 
 ```
 GROQ_API_KEY=your_key_here
+GEMINI_API_KEY=your_key_here
 POPPLER_PATH=optional_windows_path_if_needed
 ```
 
@@ -299,48 +350,37 @@ http://localhost:8501
 
 ## Repository Status
 
-### Stable
+###  Stable
 
 - Multi-format ingestion
-- Vision-based OCR
-- Chart-heavy page detection
+- Gemini-based Vision OCR
 - Structured PDF table preservation
 - Deterministic CSV computation
 - Hybrid semantic + lexical retrieval
+- Structural re-ranking boosts
 - Strict document-grounded generation
 - Persistent vector storage
-- Streamlit demo operational
-
-### Optimized
-
-- Reduced embedding explosion
-- Controlled re-ranking candidate pool
-- Context-length balancing
-- Duplicate vision detection
-- Memory-stable ingestion
-- Improved structured row disambiguation
+- APScheduler background jobs
+- Google Drive auto-sync
+- Automated vector + metadata backup
 
 ---
 
 ## System Characteristics
 
 - No document-specific hardcoding
-- No entity-level rule injection
 - Fully data-driven ranking
 - Deterministic numeric reasoning
 - Vision-aware but quota-controlled
 - Production-extensible architecture
+- Backup-safe and crash-resilient
 
 ---
 
 ## Next Phase
 
 - FastAPI backend migration
-- API-first microservice architecture
-- Scheduled background ingestion
 - Docker containerization
-- Cloud deployment (Render / Railway / etc.)
-- Background ingestion workers
-- LLM abstraction layer
-- Observability & monitoring
-- Production logging cleanup
+- Cloud deployment
+- Observability and monitoring
+- Structured logging cleanup
