@@ -8,7 +8,7 @@ The system supports:
 - Multi-format ingestion (PDF, DOCX, CSV)
 - Vision-based extraction for scanned and chart-heavy PDFs
 - Format-aware adaptive chunking
-- Lightweight semantic embeddings
+- Hosted semantic embeddings (HuggingFace Inference Router)
 - Deterministic structured computation
 - Hybrid retrieval and structural re-ranking
 - Automated persistence and synchronization
@@ -52,7 +52,7 @@ This repository contains an advanced Retrieval-Augmented Generation (RAG) system
 The system separates responsibilities cleanly between:
 
 - Vision extraction
-- Embedding layer
+- Embedding layer (hosted inference)
 - Deterministic numeric reasoning
 - LLM-based semantic reasoning
 - Automated persistence and backup
@@ -70,7 +70,7 @@ The current implementation is **stable and demo-ready via Streamlit**.
 - Vision-based OCR for scanned and image-heavy PDFs
 - Structured table-aware chunking
 - Adaptive chunk sizing
-- Lightweight semantic embeddings (`bge-small-en-v1.5`)
+- Hosted semantic embeddings (`BAAI/bge-small-en-v1.5` via HuggingFace Inference Router)
 - Persistent vector storage (ChromaDB)
 - SQLite metadata + structured storage
 - Hybrid semantic + lexical retrieval
@@ -115,14 +115,6 @@ The system detects when vision-based extraction is required.
 - API call cap to control quota usage
 - Structured normalization of extracted text
 - Markdown-style reconstruction for tables
-
-### Enables Accurate Extraction From
-
-- Research paper figures
-- Financial charts
-- Image-based tables
-- Scanned reports
-- Graphical statistical data
 
 > **Note:** Vision is used strictly for ingestion and extraction, not for main RAG reasoning.
 
@@ -182,20 +174,14 @@ The ingestion pipeline dynamically selects chunking strategies.
 - No embeddings required for deterministic numeric queries
 - Vector store used only when semantic retrieval is required
 
-### Reduces
-
-- Embedding overhead
-- Memory consumption
-- Context leakage
-- Retrieval ambiguity
-
 ---
 
 ## Retrieval & Ranking Architecture
 
 The system uses:
 
-- SentenceTransformers (`bge-small-en-v1.5`)
+- Hosted embeddings via HuggingFace Inference Router
+- `BAAI/bge-small-en-v1.5`
 - Normalized embeddings
 - Persistent ChromaDB vector store
 
@@ -222,18 +208,9 @@ Both served via **Groq**.
 - No document-specific hardcoding
 - No entity rule injection
 
-### Result
-
-- High grounding accuracy
-- Stable structured retrieval
-- Reliable numeric responses
-- Reduced hallucination risk
-
 ---
 
 ## Automation & Persistence Layer
-
-The system includes automated synchronization and backup mechanisms.
 
 ### APScheduler Jobs
 
@@ -246,14 +223,6 @@ The system includes automated synchronization and backup mechanisms.
 - SQLite → Pickle serialization → Google Drive
 - ChromaDB → tar.gz compression → Google Drive
 - Controlled rehydration on restart
-
-### Benefits
-
-- Crash recovery safety
-- State durability
-- Low-cost persistence
-- Cloud-ready architecture
-- Production-aligned reliability
 
 ---
 
@@ -270,7 +239,7 @@ Input Sources (Google Drive / Azure / Local)
           │
  Adaptive Chunking
           │
- bge-small Embeddings
+ HuggingFace Hosted Embeddings (bge-small-en-v1.5)
           │
  ChromaDB (Vector Store)
           │
@@ -295,10 +264,10 @@ Input Sources (Google Drive / Azure / Local)
 |-----------|------------|
 | Language | Python |
 | PDF Extraction | pdfplumber |
-| Vision/OCR | Gemini 2.5 Flash (Vision) |
+| Vision/OCR | Gemini 2.5 Flash |
 | DOCX Parsing | python-docx |
 | Structured Data | Pandas |
-| Embeddings | sentence-transformers (`bge-small-en-v1.5`) |
+| Embeddings | HuggingFace Inference Router (`BAAI/bge-small-en-v1.5`) |
 | Vector Store | ChromaDB |
 | Metadata Store | SQLite |
 | LLM Backend | Groq |
@@ -325,6 +294,7 @@ Create a `.env` file:
 ```
 GROQ_API_KEY=your_key_here
 GEMINI_API_KEY=your_key_here
+HF_API_KEY=your_huggingface_token
 POPPLER_PATH=optional_windows_path_if_needed
 ```
 
@@ -358,7 +328,7 @@ http://localhost:8501
 - Deterministic CSV computation
 - Hybrid semantic + lexical retrieval
 - Structural re-ranking boosts
-- Strict document-grounded generation
+- Hosted embedding inference
 - Persistent vector storage
 - APScheduler background jobs
 - Google Drive auto-sync
@@ -371,7 +341,7 @@ http://localhost:8501
 - No document-specific hardcoding
 - Fully data-driven ranking
 - Deterministic numeric reasoning
-- Vision-aware but quota-controlled
+- Hosted embedding inference (no local model dependency)
 - Production-extensible architecture
 - Backup-safe and crash-resilient
 
