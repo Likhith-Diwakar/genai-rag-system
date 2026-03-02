@@ -1,15 +1,24 @@
+# src/storage/tracker_db.py
+
+import os
 import sqlite3
 from pathlib import Path
 from threading import Lock
 
-DB_PATH = Path("data/tracker.db")
+# ----------------------------------------------------------
+# Dynamic data directory (Local + Production safe)
+# ----------------------------------------------------------
+
+BASE_DATA_DIR = os.getenv("DATA_DIR", "data")
+DB_PATH = Path(BASE_DATA_DIR) / "tracker.db"
+
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 class TrackerDB:
     _lock = Lock()  # Ensures safe writes across background threads
 
     def __init__(self):
-        DB_PATH.parent.mkdir(exist_ok=True)
 
         # Thread-safe connection
         self.conn = sqlite3.connect(
@@ -17,7 +26,7 @@ class TrackerDB:
             check_same_thread=False
         )
 
-        #  Enable WAL mode for better concurrency
+        # Enable WAL mode for better concurrency
         self.conn.execute("PRAGMA journal_mode=WAL;")
 
         self._create_table()

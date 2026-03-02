@@ -1,16 +1,27 @@
+# src/storage/sqlite_store.py
+
 import os
 import sqlite3
 import pandas as pd
 from src.utils.logger import logger
 
-DB_PATH = "data/csv_store.db"
+# ----------------------------------------------------------
+# Dynamic data directory (Local + Production safe)
+# ----------------------------------------------------------
+
+BASE_DATA_DIR = os.getenv("DATA_DIR", "data")
+os.makedirs(BASE_DATA_DIR, exist_ok=True)
+
+DB_PATH = os.path.join(BASE_DATA_DIR, "csv_store.db")
 
 
 class SQLiteStore:
 
     def __init__(self):
-        os.makedirs("data", exist_ok=True)
-        self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.conn = sqlite3.connect(
+            DB_PATH,
+            check_same_thread=False
+        )
 
     # -------------------------------------------------
     # Safe table name formatting

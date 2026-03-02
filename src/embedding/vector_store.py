@@ -6,11 +6,21 @@ import chromadb
 from chromadb.config import Settings
 from src.utils.logger import logger
 
+# ----------------------------------------------------------
 # Disable Chroma telemetry
+# ----------------------------------------------------------
+
 os.environ["CHROMA_TELEMETRY_ENABLED"] = "false"
 os.environ["ANONYMIZED_TELEMETRY"] = "false"
 
-CHROMA_DIR = "data/chroma"
+# ----------------------------------------------------------
+# Dynamic data directory (Local + Production safe)
+# ----------------------------------------------------------
+
+BASE_DATA_DIR = os.getenv("DATA_DIR", "data")
+CHROMA_DIR = os.path.join(BASE_DATA_DIR, "chroma")
+
+os.makedirs(CHROMA_DIR, exist_ok=True)
 
 _client = None
 _collection = None
@@ -23,7 +33,7 @@ def _initialize():
     if _client is None:
         with _lock:
             if _client is None:
-                logger.info("Initializing ChromaDB (telemetry disabled)")
+                logger.info(f"Initializing ChromaDB at {CHROMA_DIR}")
 
                 _client = chromadb.PersistentClient(
                     path=CHROMA_DIR,
