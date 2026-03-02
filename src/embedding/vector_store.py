@@ -2,72 +2,153 @@
 
 import os
 import threading
-import chromadb
-from chromadb.config import Settings
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    VectorParams,
+    Distance,
+    PointStruct,
+    Filter,
+    FieldCondition,
+    MatchValue,
+)
 from src.utils.logger import logger
 
 # ----------------------------------------------------------
-# Disable Chroma telemetry
+# Qdrant Configuration
 # ----------------------------------------------------------
 
-os.environ["CHROMA_TELEMETRY_ENABLED"] = "false"
-os.environ["ANONYMIZED_TELEMETRY"] = "false"
-
-# ----------------------------------------------------------
-# Dynamic data directory (Local + Production safe)
-# ----------------------------------------------------------
-
-BASE_DATA_DIR = os.getenv("DATA_DIR", "data")
-CHROMA_DIR = os.path.join(BASE_DATA_DIR, "chroma")
-
-os.makedirs(CHROMA_DIR, exist_ok=True)
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+COLLECTION_NAME = "drive_docs"
 
 _client = None
-_collection = None
 _lock = threading.Lock()
 
 
 def _initialize():
-    global _client, _collection
+    global _client
 
     if _client is None:
         with _lock:
             if _client is None:
-                logger.info(f"Initializing ChromaDB at {CHROMA_DIR}")
 
-                _client = chromadb.PersistentClient(
-                    path=CHROMA_DIR,
-                    settings=Settings(
-                        anonymized_telemetry=False,
-                        allow_reset=True
+                if not QDRANT_URL or not QDRANT_API_KEY:
+                    raise RuntimeError(
+                        "QDRANT_URL or QDRANT_API_KEY not set"
                     )
+
+                logger.info("Initializing Qdrant Cloud connection")
+
+                _client = QdrantClient(
+                    url=QDRANT_URL,
+                    api_key=QDRANT_API_KEY,
                 )
 
-                _collection = _client.get_or_create_collection(
-                    name="drive_docs"
-                )
+                # Create collection if not exists
+                existing_collections = [
+                    c.name for c in _client.get_collections().collections
+                ]
 
-    return _collection
+                if COLLECTION_NAME not in existing_collections:
+                    logger.info("Creating Qdrant collection")
+
+                    _client.create_collection(
+                        collection_name=COLLECTION_NAME,
+                        vectors_config=VectorParams(
+                            size=384,  # bge-small-en-v1.5 embedding size
+                            distance=Distance.COSINE,
+                        ),
+                    )
+
+    return _client
 
 
 class VectorStore:
     def __init__(self):
-        self.collection = _initialize()
+        self.client = _initialize()
 
+    # ------------------------------------------------------
+    # ADD CHUNKS
+    # ------------------------------------------------------
     def add_chunks(self, embeddings, documents, metadatas, ids):
-        logger.info(f"Adding {len(documents)} chunks to ChromaDB")
-        self.collection.add(
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas,
-            ids=ids
+
+        logger.info(f"Adding {len(documents)} chunks to Qdrant")
+
+        points = []
+
+        for i in range(len(documents)):
+            payload = metadatas[i].copy()
+            payload["document"] = documents[i]
+
+            points.append(
+                PointStruct(
+                    id=ids[i],
+                    vector=embeddings[i],
+                    payload=payload,
+                )
+            )
+
+        self.client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=points,
         )
 
+    # ------------------------------------------------------
+    # DELETE BY FILE ID
+    # ------------------------------------------------------
     def delete_by_file_id(self, file_id: str):
-        logger.warning(f"Deleting vectors for file_id={file_id}")
-        self.collection.delete(where={"file_id": file_id})
 
+        logger.warning(f"Deleting vectors for file_id={file_id}")
+
+        self.client.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="file_id",
+                        match=MatchValue(value=file_id),
+                    )
+                ]
+            ),
+        )
+
+    # ------------------------------------------------------
+    # COUNT
+    # ------------------------------------------------------
     def count(self) -> int:
-        count = self.collection.count()
-        logger.info(f"Total vectors in ChromaDB: {count}")
+        count = self.client.count(collection_name=COLLECTION_NAME).count
+        logger.info(f"Total vectors in Qdrant: {count}")
         return count
+
+    # ------------------------------------------------------
+    # QUERY (Chroma-compatible return format)
+    # ------------------------------------------------------
+    def query(self, embedding: list, n_results: int):
+
+        results = self.client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=embedding,
+            limit=n_results,
+            with_payload=True,
+        )
+
+        documents = []
+        metadatas = []
+        distances = []
+
+        for hit in results:
+            payload = hit.payload or {}
+
+            documents.append(payload.get("document"))
+            metadatas.append(
+                {k: v for k, v in payload.items() if k != "document"}
+            )
+
+            # Convert cosine similarity → distance-like value
+            distances.append(1 - hit.score)
+
+        return {
+            "documents": [documents],
+            "metadatas": [metadatas],
+            "distances": [distances],
+        }
