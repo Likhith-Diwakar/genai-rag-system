@@ -15,36 +15,47 @@ class BGEEmbedder(BaseEmbedder):
         if not self.api_token:
             raise ValueError("HF_API_TOKEN not found in environment variables.")
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
-        headers = {
-            "Authorization": f"Bearer {self.api_token}",
+        self.headers = {
+            "Authorization": f"Bearer {self.api_token.strip()}",
             "Content-Type": "application/json"
         }
 
-        embeddings = []
+    def embed(self, texts: List[str]) -> List[List[float]]:
+        """
+        Batch embedding call to HuggingFace Inference Router.
+        Sends all texts in a single request to avoid timeout issues.
+        """
 
-        for text in texts:
-            response = requests.post(
-                HF_API_URL,
-                headers=headers,
-                json={
-                    "inputs": text
-                },
-                timeout=60
+        if not texts:
+            return []
+
+        response = requests.post(
+            HF_API_URL,
+            headers=self.headers,
+            json={
+                "inputs": texts
+            },
+            timeout=180  # increased timeout for large batches
+        )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"HuggingFace embedding API error: "
+                f"{response.status_code} | {response.text}"
             )
 
-            if response.status_code != 200:
-                raise Exception(
-                    f"HuggingFace embedding API error: "
-                    f"{response.status_code} | {response.text}"
-                )
+        result = response.json()
 
-            vector = response.json()
+        # Handle different HF response formats safely
+        if isinstance(result, list):
+            # Case 1: Already batch embeddings [[...], [...]]
+            if isinstance(result[0], list):
+                return result
 
-            # Some responses return nested list
-            if isinstance(vector, list) and isinstance(vector[0], list):
-                vector = vector[0]
+            # Case 2: Single embedding returned as flat list
+            if isinstance(result[0], float):
+                return [result]
 
-            embeddings.append(vector)
-
-        return embeddings
+        raise Exception(
+            f"Unexpected embedding response format: {type(result)} | {result}"
+        )
