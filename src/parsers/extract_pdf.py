@@ -15,15 +15,8 @@ MIN_IMAGE_WIDTH = 80
 MIN_IMAGE_HEIGHT = 80
 DIGITAL_TEXT_THRESHOLD = 200
 
-#  Safety cap to prevent quota explosion
+# Safety cap to prevent quota explosion
 MAX_VISION_CALLS_PER_DOC = 5
-
-# -------------------------------------------------------
-# Poppler path for Windows — set to None on Linux/Mac
-# On Windows: download from https://github.com/oschwartz10612/poppler-windows/releases
-# then set path below, e.g. r"C:\tools\poppler\bin"
-# -------------------------------------------------------
-POPPLER_PATH = os.getenv("POPPLER_PATH", None)  # set POPPLER_PATH in your .env on Windows
 
 
 def _ensure_image_dir():
@@ -34,45 +27,37 @@ def _ensure_image_dir():
 # CID GARBAGE CLEANER
 # -----------------------------
 def _clean_cid_garbage(text: str) -> str:
-    """
-    Remove (cid:NNN) font encoding artifacts that pdfplumber
-    emits when it cannot decode embedded font glyphs.
-    These corrupt the text and confuse the LLM.
-    Example: 'AFP (cid:131)(cid:144)(cid:134)' → 'AFP'
-    """
-    # Remove all (cid:NNN) patterns
     cleaned = re.sub(r'\(cid:\d+\)', '', text)
-    # Collapse multiple spaces left behind
     cleaned = re.sub(r' {2,}', ' ', cleaned)
-    # Collapse excessive newlines
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
 
 
 # -----------------------------
 # SAFE convert_from_path WRAPPER
+# Render-safe (no poppler required)
 # -----------------------------
 def _convert_page_to_image(path: str, page_number: int):
     """
-    Safely converts a single PDF page to a PIL image.
-    Returns list of PIL images or empty list on failure.
-    Handles Windows poppler path automatically.
+    Converts a single PDF page to a PIL image.
+    Uses pypdfium2 backend to avoid poppler dependency.
+    Fully compatible with Render Free plan.
     """
-    kwargs = dict(
-        dpi=300,
-        first_page=page_number,
-        last_page=page_number
-    )
-    if POPPLER_PATH:
-        kwargs["poppler_path"] = POPPLER_PATH
 
     try:
-        images = convert_from_path(path, **kwargs)
+        images = convert_from_path(
+            path,
+            dpi=300,
+            first_page=page_number,
+            last_page=page_number,
+            backend="pypdfium2"
+        )
         return images
+
     except Exception as e:
         logger.error(
-            f"convert_from_path failed on page {page_number}. "
-            f"If on Windows, set POPPLER_PATH in .env. Error: {e}"
+            f"convert_from_path failed on page {page_number} "
+            f"(pypdfium2 backend). Error: {e}"
         )
         return []
 
@@ -208,42 +193,31 @@ def extract_pdf_text(path: str) -> str:
 
             combined_output.append(f"\n\n===== PAGE {page_number} =====\n")
 
-            # -------------------------
             # 1️⃣ Extract digital text
-            # -------------------------
             text = page.extract_text()
             if text:
-                text = _clean_cid_garbage(text)  # remove (cid:NNN) font artifacts
+                text = _clean_cid_garbage(text)
                 combined_output.append(text)
 
-            # -------------------------
             # 2️⃣ Extract structured tables
-            # -------------------------
             table_blocks = _extract_tables(page, page_number)
             if table_blocks:
                 logger.info(f"Page {page_number}: extracted {len(table_blocks)} table row blocks via pdfplumber")
             combined_output.extend(table_blocks)
 
-            # ==========================================================
-            # 3️⃣ CHART-HEAVY PAGE DETECTION
-            # If many images exist on a digital page → run full-page vision
-            # ==========================================================
+            # 3️⃣ Chart-heavy detection
             if (
                 len(page.images) >= 3
                 and text
                 and vision_calls < MAX_VISION_CALLS_PER_DOC
             ):
-                logger.info(f"Chart-heavy page detected on page {page_number} ({len(page.images)} images). Running full-page vision.")
+                logger.info(f"Chart-heavy page detected on page {page_number}. Running full-page vision.")
                 try:
                     images = _convert_page_to_image(path, page_number)
 
-                    if not images:
-                        logger.warning(f"Page {page_number}: convert_from_path returned no images. Skipping chart-heavy vision.")
-                    else:
+                    if images:
                         full_page_img = images[0]
-
-                        img_bytes = full_page_img.tobytes()
-                        img_hash = hashlib.md5(img_bytes).hexdigest()
+                        img_hash = hashlib.md5(full_page_img.tobytes()).hexdigest()
 
                         if img_hash not in seen_hashes:
                             seen_hashes.add(img_hash)
@@ -252,28 +226,19 @@ def extract_pdf_text(path: str) -> str:
 
                             if vision_text:
                                 vision_calls += 1
-                                logger.info(f"Page {page_number}: chart-heavy full-page vision succeeded ({vision_calls}/{MAX_VISION_CALLS_PER_DOC} calls used)")
                                 combined_output.append(
                                     f"\n[FULL_PAGE_VISION_{page_number}]\n{vision_text}\n"
                                 )
-                            else:
-                                logger.warning(f"Page {page_number}: Gemini returned empty for chart-heavy full-page vision.")
-                        else:
-                            logger.info(f"Page {page_number}: chart-heavy page image already processed (duplicate hash).")
 
-                    continue  # Skip per-image processing for this page
+                    continue
 
                 except Exception as e:
-                    logger.error(f"Page {page_number}: chart-heavy full-page vision failed: {e}")
-                    # Fall through to per-image processing instead of silently skipping
+                    logger.error(f"Page {page_number}: chart-heavy vision failed: {e}")
 
-            # -------------------------
-            # 4️⃣ Per-image processing (normal case)
-            # -------------------------
+            # 4️⃣ Per-image processing
             for img_index, img in enumerate(page.images, start=1):
 
                 if vision_calls >= MAX_VISION_CALLS_PER_DOC:
-                    logger.info("Vision call cap reached for document.")
                     break
 
                 try:
@@ -297,51 +262,35 @@ def extract_pdf_text(path: str) -> str:
                         .original
                     )
 
-                    img_bytes = cropped.tobytes()
-                    img_hash = hashlib.md5(img_bytes).hexdigest()
+                    img_hash = hashlib.md5(cropped.tobytes()).hexdigest()
 
                     if img_hash in seen_hashes:
                         continue
 
                     seen_hashes.add(img_hash)
 
-                    logger.info(
-                        f"Running vision on PAGE {page_number}, IMAGE {img_index}"
-                    )
-
                     vision_text = run_vision_extraction(cropped)
 
                     if vision_text:
                         vision_calls += 1
-                        logger.info(f"Page {page_number} image {img_index}: vision succeeded ({vision_calls}/{MAX_VISION_CALLS_PER_DOC} calls used)")
                         combined_output.append(
                             f"\n[IMAGE_VISION_PAGE_{page_number}_{img_index}]\n{vision_text}\n"
                         )
-                    else:
-                        logger.warning(f"Page {page_number}, image {img_index}: Gemini returned empty.")
 
-                except Exception as e:
-                    logger.warning(f"Page {page_number}, image {img_index}: per-image vision failed: {e}")
+                except Exception:
                     continue
 
-            # -------------------------
-            # 5️⃣ Full-page fallback (scanned PDF)
-            # -------------------------
+            # 5️⃣ Scanned fallback
             if (
                 (not text or len(text) < DIGITAL_TEXT_THRESHOLD)
                 and vision_calls < MAX_VISION_CALLS_PER_DOC
             ):
-                logger.info(f"Page {page_number}: sparse/no digital text (len={len(text) if text else 0}). Running scanned-page fallback vision.")
                 try:
                     images = _convert_page_to_image(path, page_number)
 
-                    if not images:
-                        logger.warning(f"Page {page_number}: convert_from_path returned no images for scanned fallback.")
-                    else:
+                    if images:
                         full_page_img = images[0]
-
-                        img_bytes = full_page_img.tobytes()
-                        img_hash = hashlib.md5(img_bytes).hexdigest()
+                        img_hash = hashlib.md5(full_page_img.tobytes()).hexdigest()
 
                         if img_hash not in seen_hashes:
                             seen_hashes.add(img_hash)
@@ -350,17 +299,11 @@ def extract_pdf_text(path: str) -> str:
 
                             if vision_text:
                                 vision_calls += 1
-                                logger.info(f"Page {page_number}: scanned fallback vision succeeded ({vision_calls}/{MAX_VISION_CALLS_PER_DOC} calls used)")
                                 combined_output.append(
                                     f"\n[FULL_PAGE_VISION_{page_number}]\n{vision_text}\n"
                                 )
-                            else:
-                                logger.warning(f"Page {page_number}: Gemini returned empty for scanned fallback.")
-                        else:
-                            logger.info(f"Page {page_number}: scanned fallback image already processed (duplicate hash).")
 
-                except Exception as e:
-                    logger.error(f"Page {page_number}: scanned fallback vision failed: {e}")
+                except Exception:
                     continue
 
     return "\n".join(combined_output)
