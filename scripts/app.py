@@ -10,7 +10,15 @@ sys.path.append(
 )
 
 import streamlit as st
+
+# ----------------------------------------------------------
+# IMPORT BUSINESS LOGIC
+# ----------------------------------------------------------
+
 from src.llm.rag import generate_answer
+from src.embedding.vector_store import VectorStore
+from src.ingestion.main import run_sync
+from src.utils.logger import logger
 
 
 # ----------------------------------------------------------
@@ -21,6 +29,29 @@ st.set_page_config(page_title="Google Drive RAG Chatbot", layout="wide")
 
 st.title("Google Drive RAG Chatbot")
 st.caption("Ask questions over your Google Drive documents")
+
+
+# ----------------------------------------------------------
+# BOOTSTRAP VECTOR STORE (ONLY ON FIRST LOAD)
+# ----------------------------------------------------------
+
+if "bootstrapped" not in st.session_state:
+
+    try:
+        vector_store = VectorStore()
+
+        if vector_store.count() == 0:
+            logger.info("Vector store empty. Running initial sync...")
+
+            with st.spinner("Initializing document index (first startup)..."):
+                run_sync(verbose=True)
+
+            logger.info("Initial sync completed successfully.")
+
+    except Exception as e:
+        logger.error(f"Bootstrap sync failed: {e}")
+
+    st.session_state.bootstrapped = True
 
 
 # ----------------------------------------------------------
