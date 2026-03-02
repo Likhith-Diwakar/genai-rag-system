@@ -9,7 +9,6 @@ def generate_answer(query: str, k: int = 7):
 
     logger.info(f"RAG query received: {query}")
 
-    # ✅ Use modular retriever
     retriever = HybridRetriever()
     documents, metadatas, scores = retriever.retrieve(query, k)
 
@@ -20,21 +19,30 @@ def generate_answer(query: str, k: int = 7):
     combined = list(zip(documents, metadatas, scores))
     combined.sort(key=lambda x: x[2], reverse=True)
 
-    # Structure-aware filtering
+    # ---------------------------------------------------------
+    # Structure-aware filtering (FIXED)
+    # ---------------------------------------------------------
+
     structured_chunks = [
         item for item in combined
         if "TABLE_ROW_START" in item[0]
     ]
 
-    if structured_chunks:
-        logger.info("Structured table rows detected in retrieval. Prioritizing structured chunks.")
+    # Only override if structured chunk is already top ranked
+    if structured_chunks and structured_chunks[0][2] >= combined[0][2]:
+        logger.info("Structured chunk is top-ranked. Keeping structured prioritization.")
         combined = structured_chunks
+    else:
+        logger.info("Using semantic ranking without forced structured override.")
 
     if not combined:
         logger.warning("No relevant chunks after filtering.")
         return "I do not know based on the provided documents.", []
 
+    # ---------------------------------------------------------
     # Context control
+    # ---------------------------------------------------------
+
     top_k = 5
     top_chunks = combined[:top_k]
 
