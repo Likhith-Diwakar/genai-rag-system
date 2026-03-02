@@ -40,8 +40,8 @@ def _initialize():
                 logger.info("Initializing Qdrant Cloud connection")
 
                 _client = QdrantClient(
-                    url=QDRANT_URL,
-                    api_key=QDRANT_API_KEY,
+                    url=QDRANT_URL.strip(),
+                    api_key=QDRANT_API_KEY.strip(),
                 )
 
                 # Create collection if not exists
@@ -55,7 +55,7 @@ def _initialize():
                     _client.create_collection(
                         collection_name=COLLECTION_NAME,
                         vectors_config=VectorParams(
-                            size=384,  # bge-small-en-v1.5 embedding size
+                            size=384,  # bge-small-en-v1.5 dimension
                             distance=Distance.COSINE,
                         ),
                     )
@@ -121,13 +121,13 @@ class VectorStore:
         return count
 
     # ------------------------------------------------------
-    # QUERY (Chroma-compatible return format)
+    # QUERY (Qdrant v1.17 compatible)
     # ------------------------------------------------------
     def query(self, embedding: list, n_results: int):
 
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=COLLECTION_NAME,
-            query_vector=embedding,
+            query=embedding,
             limit=n_results,
             with_payload=True,
         )
@@ -136,7 +136,7 @@ class VectorStore:
         metadatas = []
         distances = []
 
-        for hit in results:
+        for hit in results.points:
             payload = hit.payload or {}
 
             documents.append(payload.get("document"))
@@ -144,7 +144,7 @@ class VectorStore:
                 {k: v for k, v in payload.items() if k != "document"}
             )
 
-            # Convert cosine similarity → distance-like value
+            # Convert similarity to distance-like value
             distances.append(1 - hit.score)
 
         return {
