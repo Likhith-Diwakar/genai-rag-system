@@ -2,6 +2,7 @@
 
 import os
 import threading
+import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     VectorParams,
@@ -68,7 +69,7 @@ class VectorStore:
         self.client = _initialize()
 
     # ------------------------------------------------------
-    # ADD CHUNKS
+    # ADD CHUNKS (Fixed UUID IDs)
     # ------------------------------------------------------
     def add_chunks(self, embeddings, documents, metadatas, ids):
 
@@ -80,9 +81,14 @@ class VectorStore:
             payload = metadatas[i].copy()
             payload["document"] = documents[i]
 
+            #  Convert string ID → deterministic UUID
+            generated_id = str(
+                uuid.uuid5(uuid.NAMESPACE_DNS, str(ids[i]))
+            )
+
             points.append(
                 PointStruct(
-                    id=ids[i],
+                    id=generated_id,
                     vector=embeddings[i],
                     payload=payload,
                 )
@@ -116,7 +122,10 @@ class VectorStore:
     # COUNT
     # ------------------------------------------------------
     def count(self) -> int:
-        count = self.client.count(collection_name=COLLECTION_NAME).count
+        count = self.client.count(
+            collection_name=COLLECTION_NAME
+        ).count
+
         logger.info(f"Total vectors in Qdrant: {count}")
         return count
 
