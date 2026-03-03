@@ -1,7 +1,6 @@
 # src/llm/rag.py
 
 import re
-from collections import defaultdict
 from src.providers.llm.groq_llm import GroqLLM
 from src.providers.retrievers.hybrid_retriever import HybridRetriever
 from src.utils.logger import logger
@@ -48,7 +47,7 @@ def generate_answer(query: str, k: int = 7):
         return "I do not know based on the provided documents.", []
 
     # ---------------------------------------------------------
-    # Lexical alignment boost (chunk-level, generic)
+    # Lexical alignment boost (chunk-level)
     # ---------------------------------------------------------
 
     query_tokens = [
@@ -75,47 +74,19 @@ def generate_answer(query: str, k: int = 7):
         logger.info("Applied lexical alignment re-ranking.")
 
     # ---------------------------------------------------------
-    # FILE-LEVEL SCORE AGGREGATION (CRITICAL FIX)
+    # GLOBAL TOP-K CONTEXT SELECTION (NO FILE COLLAPSE)
     # ---------------------------------------------------------
 
-    file_scores = defaultdict(float)
-    file_chunks = defaultdict(list)
+    # Final ranking purely by retriever score (after lexical boost ordering)
+    combined.sort(key=lambda x: x[2], reverse=True)
 
-    for doc, meta, score in combined:
-        file_id = meta.get("file_id")
-        file_scores[file_id] += score
-        file_chunks[file_id].append((doc, meta, score))
-
-    if not file_scores:
-        logger.warning("No file-level aggregation possible.")
-        return "I do not know based on the provided documents.", []
-
-    # Rank files by total score
-    ranked_files = sorted(
-        file_scores.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    best_file_id = ranked_files[0][0]
-    best_file_chunks = file_chunks[best_file_id]
-
-    # Sort chunks within best file
-    best_file_chunks.sort(key=lambda x: x[2], reverse=True)
-
-    logger.info(f"Dominant file selected after aggregation | file_id={best_file_id}")
-
-    # ---------------------------------------------------------
-    # Context selection with adjacency expansion (within file)
-    # ---------------------------------------------------------
-
-    top_k = 5
     MAX_CONTEXT_CHARS = 5000
+    top_k = 7
 
     selected_chunks = []
     current_length = 0
 
-    for idx, (doc, meta, score) in enumerate(best_file_chunks):
+    for doc, meta, score in combined:
 
         if len(selected_chunks) >= top_k:
             break
@@ -124,26 +95,20 @@ def generate_answer(query: str, k: int = 7):
             selected_chunks.append((doc, meta, score))
             current_length += len(doc)
 
-        # Adjacency expansion inside same file
-        if len(doc) < 300:
-            if idx + 1 < len(best_file_chunks):
-                next_doc, next_meta, next_score = best_file_chunks[idx + 1]
-
-                if current_length + len(next_doc) <= MAX_CONTEXT_CHARS:
-                    selected_chunks.append((next_doc, next_meta, next_score))
-                    current_length += len(next_doc)
-
     if not selected_chunks:
-        logger.warning("Context empty after file-level filtering.")
+        logger.warning("Context empty after ranking.")
         return "I do not know based on the provided documents.", []
 
     context = "\n\n".join([doc for doc, _, _ in selected_chunks])
 
+    # Keep dominant file only for source display (no filtering logic)
     dominant_file_id = selected_chunks[0][1].get("file_id")
     dominant_file_name = selected_chunks[0][1].get("file_name", "UNKNOWN")
 
     logger.info(f"Top document contributing | file={dominant_file_name}")
-    logger.info(f"Context length: {len(context)} chars from {len(selected_chunks)} chunk(s)")
+    logger.info(
+        f"Context length: {len(context)} chars from {len(selected_chunks)} chunk(s)"
+    )
 
     # ---------------------------------------------------------
     # LLM CALL
@@ -180,7 +145,11 @@ Answer in a complete sentence:
     llm = GroqLLM()
     answer = llm.generate(system_message, user_message)
 
-    if not answer.strip() or answer.strip() == "I do not know based on the provided documents.":
+    if (
+        not answer.strip()
+        or answer.strip()
+        == "I do not know based on the provided documents."
+    ):
         logger.info("LLM could not find answer in provided context.")
         return "I do not know based on the provided documents.", []
 
