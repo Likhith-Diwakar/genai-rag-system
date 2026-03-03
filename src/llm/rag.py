@@ -74,38 +74,67 @@ def generate_answer(query: str, k: int = 7):
         logger.info("Applied lexical alignment re-ranking.")
 
     # ---------------------------------------------------------
-    # GLOBAL TOP-K CONTEXT SELECTION (NO FILE COLLAPSE)
+    # GLOBAL TOP-K CONTEXT SELECTION (rank-aware, no collapse)
     # ---------------------------------------------------------
 
-    # Final ranking purely by retriever score (after lexical boost ordering)
+    # Final ranking strictly by retriever score
     combined.sort(key=lambda x: x[2], reverse=True)
 
     MAX_CONTEXT_CHARS = 5000
-    top_k = 7
+    GLOBAL_TOP_K = min(k, 7)
 
     selected_chunks = []
     current_length = 0
+    seen_chunk_ids = set()
 
     for doc, meta, score in combined:
 
-        if len(selected_chunks) >= top_k:
+        if len(selected_chunks) >= GLOBAL_TOP_K:
             break
 
-        if current_length + len(doc) <= MAX_CONTEXT_CHARS:
-            selected_chunks.append((doc, meta, score))
-            current_length += len(doc)
+        chunk_id = meta.get("chunk_id")
+        file_id = meta.get("file_id")
+
+        chunk_key = f"{file_id}_{chunk_id}"
+
+        if chunk_key in seen_chunk_ids:
+            continue
+
+        if current_length + len(doc) > MAX_CONTEXT_CHARS:
+            continue
+
+        selected_chunks.append((doc, meta, score))
+        seen_chunk_ids.add(chunk_key)
+        current_length += len(doc)
 
     if not selected_chunks:
-        logger.warning("Context empty after ranking.")
+        logger.warning("Context empty after global ranking.")
         return "I do not know based on the provided documents.", []
+
+    # ---------------------------------------------------------
+    # Dominant file detection (max-score, not sum)
+    # ---------------------------------------------------------
+
+    file_max_score = {}
+    file_name_map = {}
+
+    for doc, meta, score in selected_chunks:
+        fid = meta.get("file_id")
+        fname = meta.get("file_name", "UNKNOWN")
+
+        if fid not in file_max_score or score > file_max_score[fid]:
+            file_max_score[fid] = score
+            file_name_map[fid] = fname
+
+    dominant_file_id = max(file_max_score, key=file_max_score.get)
+    dominant_file_name = file_name_map[dominant_file_id]
+
+    logger.info(
+        f"Dominant file (max-score method) | file={dominant_file_name}"
+    )
 
     context = "\n\n".join([doc for doc, _, _ in selected_chunks])
 
-    # Keep dominant file only for source display (no filtering logic)
-    dominant_file_id = selected_chunks[0][1].get("file_id")
-    dominant_file_name = selected_chunks[0][1].get("file_name", "UNKNOWN")
-
-    logger.info(f"Top document contributing | file={dominant_file_name}")
     logger.info(
         f"Context length: {len(context)} chars from {len(selected_chunks)} chunk(s)"
     )
