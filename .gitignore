@@ -1,3 +1,8 @@
+# Backup artifacts
+backups/
+*.snapshot
+*.pkl.gz
+*.db
 # Python cache
 __pycache__/
 *.pyc
