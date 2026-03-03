@@ -1,5 +1,7 @@
 # src/llm/rag.py
 
+import re
+from collections import defaultdict
 from src.providers.llm.groq_llm import GroqLLM
 from src.providers.retrievers.hybrid_retriever import HybridRetriever
 from src.utils.logger import logger
@@ -17,20 +19,26 @@ def generate_answer(query: str, k: int = 7):
         return "I do not know based on the provided documents.", []
 
     combined = list(zip(documents, metadatas, scores))
-    combined.sort(key=lambda x: x[2], reverse=True)
 
     # ---------------------------------------------------------
-    # Structure-aware filtering (FIXED)
+    # Structured override (intent-aware)
     # ---------------------------------------------------------
+
+    numeric_tokens = re.findall(r"\b\d+\b", query)
+    table_keywords = {"table", "row", "column", "value", "percentage", "percent"}
+
+    is_table_query = (
+        bool(numeric_tokens)
+        or any(word in query.lower() for word in table_keywords)
+    )
 
     structured_chunks = [
         item for item in combined
         if "TABLE_ROW_START" in item[0]
     ]
 
-    # Only override if structured chunk is already top ranked
-    if structured_chunks and structured_chunks[0][2] >= combined[0][2]:
-        logger.info("Structured chunk is top-ranked. Keeping structured prioritization.")
+    if is_table_query and structured_chunks:
+        logger.info("Table-oriented query detected. Using structured prioritization.")
         combined = structured_chunks
     else:
         logger.info("Using semantic ranking without forced structured override.")
@@ -40,30 +48,106 @@ def generate_answer(query: str, k: int = 7):
         return "I do not know based on the provided documents.", []
 
     # ---------------------------------------------------------
-    # Context control
+    # Lexical alignment boost (chunk-level, generic)
+    # ---------------------------------------------------------
+
+    query_tokens = [
+        token.lower()
+        for token in re.findall(r"\b[a-zA-Z]{3,}\b", query)
+    ]
+
+    if query_tokens:
+        boosted = []
+        non_boosted = []
+
+        for item in combined:
+            doc_text = item[0].lower()
+            match_count = sum(token in doc_text for token in query_tokens)
+
+            if match_count > 0:
+                boosted.append((match_count, item))
+            else:
+                non_boosted.append(item)
+
+        boosted.sort(key=lambda x: (-x[0], -x[1][2]))
+        combined = [item for _, item in boosted] + non_boosted
+
+        logger.info("Applied lexical alignment re-ranking.")
+
+    # ---------------------------------------------------------
+    # FILE-LEVEL SCORE AGGREGATION (CRITICAL FIX)
+    # ---------------------------------------------------------
+
+    file_scores = defaultdict(float)
+    file_chunks = defaultdict(list)
+
+    for doc, meta, score in combined:
+        file_id = meta.get("file_id")
+        file_scores[file_id] += score
+        file_chunks[file_id].append((doc, meta, score))
+
+    if not file_scores:
+        logger.warning("No file-level aggregation possible.")
+        return "I do not know based on the provided documents.", []
+
+    # Rank files by total score
+    ranked_files = sorted(
+        file_scores.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    best_file_id = ranked_files[0][0]
+    best_file_chunks = file_chunks[best_file_id]
+
+    # Sort chunks within best file
+    best_file_chunks.sort(key=lambda x: x[2], reverse=True)
+
+    logger.info(f"Dominant file selected after aggregation | file_id={best_file_id}")
+
+    # ---------------------------------------------------------
+    # Context selection with adjacency expansion (within file)
     # ---------------------------------------------------------
 
     top_k = 5
-    top_chunks = combined[:top_k]
-
     MAX_CONTEXT_CHARS = 5000
 
-    context_parts = []
+    selected_chunks = []
     current_length = 0
 
-    for doc, meta, score in top_chunks:
-        if current_length + len(doc) > MAX_CONTEXT_CHARS:
+    for idx, (doc, meta, score) in enumerate(best_file_chunks):
+
+        if len(selected_chunks) >= top_k:
             break
-        context_parts.append(doc)
-        current_length += len(doc)
 
-    context = "\n\n".join(context_parts)
+        if current_length + len(doc) <= MAX_CONTEXT_CHARS:
+            selected_chunks.append((doc, meta, score))
+            current_length += len(doc)
 
-    dominant_file_id = top_chunks[0][1].get("file_id")
-    dominant_file_name = top_chunks[0][1].get("file_name", "UNKNOWN")
+        # Adjacency expansion inside same file
+        if len(doc) < 300:
+            if idx + 1 < len(best_file_chunks):
+                next_doc, next_meta, next_score = best_file_chunks[idx + 1]
+
+                if current_length + len(next_doc) <= MAX_CONTEXT_CHARS:
+                    selected_chunks.append((next_doc, next_meta, next_score))
+                    current_length += len(next_doc)
+
+    if not selected_chunks:
+        logger.warning("Context empty after file-level filtering.")
+        return "I do not know based on the provided documents.", []
+
+    context = "\n\n".join([doc for doc, _, _ in selected_chunks])
+
+    dominant_file_id = selected_chunks[0][1].get("file_id")
+    dominant_file_name = selected_chunks[0][1].get("file_name", "UNKNOWN")
 
     logger.info(f"Top document contributing | file={dominant_file_name}")
-    logger.info(f"Context length: {len(context)} chars from {len(context_parts)} chunk(s)")
+    logger.info(f"Context length: {len(context)} chars from {len(selected_chunks)} chunk(s)")
+
+    # ---------------------------------------------------------
+    # LLM CALL
+    # ---------------------------------------------------------
 
     system_message = """
 You are a document question answering system.

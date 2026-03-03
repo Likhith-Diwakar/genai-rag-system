@@ -1,10 +1,9 @@
 import os
 import re
 import pdfplumber
-import hashlib
 import pandas as pd
+import unicodedata
 from pdf2image import convert_from_path
-from PIL import Image
 from src.utils.logger import logger
 from src.parsers.vision_extractor import run_vision_extraction
 
@@ -13,9 +12,6 @@ IMAGE_OUTPUT_DIR = "data/tmp/pdf_images"
 
 MIN_IMAGE_WIDTH = 80
 MIN_IMAGE_HEIGHT = 80
-DIGITAL_TEXT_THRESHOLD = 200
-
-# Safety cap to prevent quota explosion
 MAX_VISION_CALLS_PER_DOC = 5
 
 
@@ -23,48 +19,76 @@ def _ensure_image_dir():
     os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 
 
-# -----------------------------
-# CID GARBAGE CLEANER
-# -----------------------------
-def _clean_cid_garbage(text: str) -> str:
+# --------------------------------------------------
+# UNIVERSAL TEXT NORMALIZER
+# --------------------------------------------------
+def _normalize_text(text: str) -> str:
+
+    if not text:
+        return ""
+
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
+
+
+# --------------------------------------------------
+# CID CLEANER
+# --------------------------------------------------
+def _clean_cid_garbage(text: str):
     cleaned = re.sub(r'\(cid:\d+\)', '', text)
     cleaned = re.sub(r' {2,}', ' ', cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
 
 
-# -----------------------------
-# SAFE convert_from_path WRAPPER
-# Render-safe (no poppler required)
-# -----------------------------
+# --------------------------------------------------
+# TEXT QUALITY DETECTION (ALPHABET DENSITY)
+# --------------------------------------------------
+def _is_text_low_quality(text: str) -> bool:
+    """
+    Detects broken CID/font encoded text using alphabet density.
+    If fewer than 40% of characters are alphabetic, treat as low quality.
+    Works at both page level and line level.
+    """
+
+    if not text or len(text.strip()) < 10:
+        return True
+
+    total_chars = len(text)
+    alpha_chars = sum(c.isalpha() for c in text)
+    alpha_ratio = alpha_chars / max(total_chars, 1)
+
+    return alpha_ratio < 0.40
+
+
+# --------------------------------------------------
+# SAFE PAGE TO IMAGE (no backend kwarg)
+# --------------------------------------------------
 def _convert_page_to_image(path: str, page_number: int):
-    """
-    Converts a single PDF page to a PIL image.
-    Uses pypdfium2 backend to avoid poppler dependency.
-    Fully compatible with Render Free plan.
-    """
 
     try:
         images = convert_from_path(
             path,
             dpi=300,
             first_page=page_number,
-            last_page=page_number,
-            backend="pypdfium2"
+            last_page=page_number
         )
         return images
 
     except Exception as e:
         logger.error(
-            f"convert_from_path failed on page {page_number} "
-            f"(pypdfium2 backend). Error: {e}"
+            f"convert_from_path failed on page {page_number}. Error: {e}"
         )
         return []
 
 
-# -----------------------------
+# --------------------------------------------------
 # TABLE FORMATTER
-# -----------------------------
+# --------------------------------------------------
 def _format_table(table, table_id=None):
 
     if not table or len(table) < 2:
@@ -94,6 +118,7 @@ def _format_table(table, table_id=None):
             block_lines.append("TABLE_ROW_END")
 
             row_text = "\n".join(block_lines).strip()
+            row_text = _normalize_text(row_text)
 
             if row_text:
                 row_blocks.append(row_text)
@@ -110,7 +135,8 @@ def _format_table(table, table_id=None):
             ]
             fallback_lines.append(" | ".join(cleaned))
 
-        return ["TABLE_FALLBACK\n" + "\n".join(fallback_lines)]
+        fallback_text = "TABLE_FALLBACK\n" + "\n".join(fallback_lines)
+        return [_normalize_text(fallback_text)]
 
 
 def _is_valid_bbox(x0, top, x1, bottom):
@@ -123,9 +149,9 @@ def _is_valid_bbox(x0, top, x1, bottom):
     return True
 
 
-# -----------------------------
+# --------------------------------------------------
 # TABLE EXTRACTION
-# -----------------------------
+# --------------------------------------------------
 def _extract_tables(page, page_number):
     output_blocks = []
     found_tables = page.find_tables()
@@ -144,9 +170,9 @@ def _extract_tables(page, page_number):
     return output_blocks
 
 
-# -----------------------------
-# SMART IMAGE DETECTOR
-# -----------------------------
+# --------------------------------------------------
+# IMAGE SIGNIFICANCE DETECTION
+# --------------------------------------------------
 def _is_meaningful_image(x0, top, x1, bottom, page):
 
     page_width = page.width
@@ -163,26 +189,62 @@ def _is_meaningful_image(x0, top, x1, bottom, page):
 
     if area_ratio >= 0.08:
         return True
-
     if width_ratio >= 0.35:
         return True
-
     if height_ratio >= 0.30:
         return True
 
     return False
 
 
-# -----------------------------
+# --------------------------------------------------
+# LINE-LEVEL GARBAGE FILTER
+# --------------------------------------------------
+def _filter_low_quality_lines(text: str, page_number: int) -> str:
+    """
+    Filters individual lines that are low-quality (CID garbage)
+    while preserving the rest of the page text.
+    Used when the overall page alpha ratio looks healthy but
+    individual lines contain corrupted font glyphs.
+    Only applies to short/medium lines — long lines are
+    almost certainly real content and are always kept.
+    """
+
+    lines = text.split("\n")
+    clean_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not stripped:
+            clean_lines.append(line)
+            continue
+
+        # Long lines are almost certainly real content — always keep
+        if len(stripped) > 80:
+            clean_lines.append(line)
+            continue
+
+        if _is_text_low_quality(stripped):
+            logger.debug(
+                f"Page {page_number} | Dropped low-quality line: {repr(stripped[:60])}"
+            )
+            continue
+
+        clean_lines.append(line)
+
+    return "\n".join(clean_lines)
+
+
+# --------------------------------------------------
 # MAIN PDF EXTRACTION
-# -----------------------------
+# --------------------------------------------------
 def extract_pdf_text(path: str) -> str:
 
     logger.info(f"Extracting text + tables + vision from PDF: {path}")
 
     _ensure_image_dir()
     combined_output = []
-    seen_hashes = set()
     vision_calls = 0
 
     with pdfplumber.open(path) as pdf:
@@ -193,117 +255,48 @@ def extract_pdf_text(path: str) -> str:
 
             combined_output.append(f"\n\n===== PAGE {page_number} =====\n")
 
-            # 1️⃣ Extract digital text
             text = page.extract_text()
+
             if text:
-                text = _clean_cid_garbage(text)
-                combined_output.append(text)
 
-            # 2️⃣ Extract structured tables
-            table_blocks = _extract_tables(page, page_number)
-            if table_blocks:
-                logger.info(f"Page {page_number}: extracted {len(table_blocks)} table row blocks via pdfplumber")
-            combined_output.extend(table_blocks)
+                # Log page-level alpha ratio for diagnostics
+                alpha_chars = sum(c.isalpha() for c in text)
+                alpha_ratio = alpha_chars / max(len(text), 1)
+                logger.info(
+                    f"DEBUG Page {page_number} | alpha_ratio={alpha_ratio:.2f} | chars={len(text)}"
+                )
 
-            # 3️⃣ Chart-heavy detection
-            if (
-                len(page.images) >= 3
-                and text
-                and vision_calls < MAX_VISION_CALLS_PER_DOC
-            ):
-                logger.info(f"Chart-heavy page detected on page {page_number}. Running full-page vision.")
-                try:
-                    images = _convert_page_to_image(path, page_number)
-
-                    if images:
-                        full_page_img = images[0]
-                        img_hash = hashlib.md5(full_page_img.tobytes()).hexdigest()
-
-                        if img_hash not in seen_hashes:
-                            seen_hashes.add(img_hash)
-
-                            vision_text = run_vision_extraction(full_page_img)
-
-                            if vision_text:
-                                vision_calls += 1
-                                combined_output.append(
-                                    f"\n[FULL_PAGE_VISION_{page_number}]\n{vision_text}\n"
-                                )
-
-                    continue
-
-                except Exception as e:
-                    logger.error(f"Page {page_number}: chart-heavy vision failed: {e}")
-
-            # 4️⃣ Per-image processing
-            for img_index, img in enumerate(page.images, start=1):
-
-                if vision_calls >= MAX_VISION_CALLS_PER_DOC:
-                    break
-
-                try:
-                    x0 = img.get("x0")
-                    top = img.get("top")
-                    x1 = img.get("x1")
-                    bottom = img.get("bottom")
-
-                    if any(v is None for v in [x0, top, x1, bottom]):
-                        continue
-
-                    if not _is_valid_bbox(x0, top, x1, bottom):
-                        continue
-
-                    if not _is_meaningful_image(x0, top, x1, bottom, page):
-                        continue
-
-                    cropped = (
-                        page.crop((x0, top, x1, bottom))
-                        .to_image(resolution=300)
-                        .original
+                # Page-level OCR fallback: fires when whole page is heavily corrupted
+                if _is_text_low_quality(text) and vision_calls < MAX_VISION_CALLS_PER_DOC:
+                    logger.warning(
+                        f"Low quality page detected (page {page_number}, "
+                        f"alpha_ratio={alpha_ratio:.2f}). Using Vision OCR fallback."
                     )
 
-                    img_hash = hashlib.md5(cropped.tobytes()).hexdigest()
-
-                    if img_hash in seen_hashes:
-                        continue
-
-                    seen_hashes.add(img_hash)
-
-                    vision_text = run_vision_extraction(cropped)
-
-                    if vision_text:
-                        vision_calls += 1
-                        combined_output.append(
-                            f"\n[IMAGE_VISION_PAGE_{page_number}_{img_index}]\n{vision_text}\n"
-                        )
-
-                except Exception:
-                    continue
-
-            # 5️⃣ Scanned fallback
-            if (
-                (not text or len(text) < DIGITAL_TEXT_THRESHOLD)
-                and vision_calls < MAX_VISION_CALLS_PER_DOC
-            ):
-                try:
                     images = _convert_page_to_image(path, page_number)
 
                     if images:
-                        full_page_img = images[0]
-                        img_hash = hashlib.md5(full_page_img.tobytes()).hexdigest()
-
-                        if img_hash not in seen_hashes:
-                            seen_hashes.add(img_hash)
-
-                            vision_text = run_vision_extraction(full_page_img)
-
+                        try:
+                            vision_text = run_vision_extraction(images[0])
                             if vision_text:
+                                text = vision_text
                                 vision_calls += 1
-                                combined_output.append(
-                                    f"\n[FULL_PAGE_VISION_{page_number}]\n{vision_text}\n"
+                                logger.info(
+                                    f"Vision OCR succeeded on page {page_number}. "
+                                    f"vision_calls={vision_calls}"
                                 )
+                        except Exception as e:
+                            logger.error(f"Vision extraction failed on page {page_number}: {e}")
 
-                except Exception:
-                    continue
+                else:
+                    # Line-level filter: removes only corrupted lines on otherwise good pages
+                    text = _filter_low_quality_lines(text, page_number)
+
+                text = _clean_cid_garbage(text)
+                text = _normalize_text(text)
+                combined_output.append(text)
+
+            table_blocks = _extract_tables(page, page_number)
+            combined_output.extend(table_blocks)
 
     return "\n".join(combined_output)

@@ -1,5 +1,8 @@
 # src/ingestion/main.py
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import tempfile
 import pandas as pd
@@ -11,6 +14,7 @@ from src.providers.parsers.parser_router import ParserRouter
 from src.providers.embeddings.bge_embedder import BGEEmbedder
 from src.providers.vectorstores.chroma_store import ChromaVectorStore
 from src.providers.chunking.chunking_router import ChunkingRouter
+from src.providers.retrievers.bm25_retriever import BM25Retriever
 
 from src.storage.tracker_db import TrackerDB
 from src.storage.sqlite_store import SQLiteStore
@@ -31,6 +35,12 @@ def main():
     sqlite_store = SQLiteStore()
     parser_router = ParserRouter()
     chunk_router = ChunkingRouter()
+
+    # -------------------------------
+    # NEW: Initialize BM25
+    # -------------------------------
+    bm25 = BM25Retriever()
+    bm25.load()
 
     docs = list_drive_documents()
 
@@ -141,7 +151,7 @@ def main():
             continue
 
         # -------------------------------
-        # Embedding
+        # Embedding (Dense lane)
         # -------------------------------
 
         embeddings = embedder.embed(chunks)
@@ -163,7 +173,18 @@ def main():
             ids=ids,
         )
 
+        # -------------------------------
+        # NEW: Sparse lane (BM25)
+        # -------------------------------
+
+        bm25.add_chunks(
+            documents=chunks,
+            metadatas=metadatas,
+        )
+
         tracker.mark_ingested(file_id, file_name)
+
+    logger.info("Ingestion completed successfully.")
 
 
 def run_sync(verbose: bool = True):
