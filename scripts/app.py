@@ -20,6 +20,32 @@ from src.embedding.vector_store import VectorStore
 from src.ingestion.main import run_sync
 from src.utils.logger import logger
 
+# 🔹 Scheduler imports (FREE daily automation)
+from src.scheduler.sync_scheduler import run_full_pipeline
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
+
+
+# ----------------------------------------------------------
+# FREE DAILY SCHEDULER (3 AM IST)
+# ----------------------------------------------------------
+
+def start_daily_scheduler():
+    timezone = pytz.timezone("Asia/Kolkata")
+
+    scheduler = BackgroundScheduler(timezone=timezone)
+
+    scheduler.add_job(
+        run_full_pipeline,
+        CronTrigger(hour=3, minute=0),  # 3:00 AM IST
+        id="daily_pipeline",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    logger.info("Daily Scheduler Started (3:00 AM IST)")
+
 
 # ----------------------------------------------------------
 # PAGE CONFIG
@@ -52,6 +78,18 @@ if "bootstrapped" not in st.session_state:
         logger.error(f"Bootstrap sync failed: {e}")
 
     st.session_state.bootstrapped = True
+
+
+# ----------------------------------------------------------
+# START DAILY SCHEDULER (ONLY ONCE)
+# ----------------------------------------------------------
+
+if "scheduler_started" not in st.session_state:
+    try:
+        start_daily_scheduler()
+        st.session_state.scheduler_started = True
+    except Exception as e:
+        logger.error(f"Scheduler failed to start: {e}")
 
 
 # ----------------------------------------------------------
