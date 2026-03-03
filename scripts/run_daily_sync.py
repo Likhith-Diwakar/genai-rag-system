@@ -4,29 +4,28 @@ from datetime import datetime
 import pytz
 
 # --------------------------------------------------
-# FIX PROJECT ROOT PATH (Works from anywhere)
+# FIX PROJECT ROOT PATH
 # --------------------------------------------------
 
-# scripts/ folder path
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# project root (one level up from scripts/)
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 
-# insert project root at start of Python path
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # --------------------------------------------------
-# Now imports will work correctly
+# IMPORT BUSINESS LOGIC
 # --------------------------------------------------
 
 from src.ingestion.main import run_sync
+from scripts.backup_sqlite import backup_sqlite
+from scripts.backup_qdrant import backup_qdrant
+from scripts.upload_backup_to_drive import upload_backup
 
 TIMEZONE = "Asia/Kolkata"
 
 # --------------------------------------------------
-# Logging Setup
+# LOGGING
 # --------------------------------------------------
 
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
@@ -44,14 +43,56 @@ def log(message):
         f.write(full_message + "\n")
 
 
+# --------------------------------------------------
+# MAIN PIPELINE (RUNS ONCE AND EXITS)
+# --------------------------------------------------
+
 def run_daily_sync():
-    log("Starting scheduled sync...")
+
+    log("========================================")
+    log("Daily Pipeline Started")
+    log("========================================")
+
+    # --------------------------------------------------
+    # STEP 1: DRIVE SYNC
+    # --------------------------------------------------
 
     try:
+        log("Starting Drive Sync...")
         run_sync(verbose=True)
-        log("Sync completed successfully.")
+        log("Drive Sync completed.")
     except Exception as e:
-        log(f"Sync failed: {e}")
+        log(f"Drive Sync failed: {e}")
+        log("Pipeline stopped.")
+        return
+
+    # --------------------------------------------------
+    # STEP 2: SQLITE BACKUP
+    # --------------------------------------------------
+
+    try:
+        log("Starting SQLite Backup...")
+        sqlite_path = backup_sqlite()
+        upload_backup(sqlite_path, "sqlite")
+        log("SQLite Backup completed.")
+    except Exception as e:
+        log(f"SQLite Backup failed: {e}")
+
+    # --------------------------------------------------
+    # STEP 3: QDRANT SNAPSHOT BACKUP
+    # --------------------------------------------------
+
+    try:
+        log("Starting Qdrant Backup...")
+        qdrant_path = backup_qdrant()
+        upload_backup(qdrant_path, "qdrant")
+        log("Qdrant Backup completed.")
+    except Exception as e:
+        log(f"Qdrant Backup failed: {e}")
+
+    log("========================================")
+    log("Daily Pipeline Finished")
+    log("========================================")
 
 
 if __name__ == "__main__":
