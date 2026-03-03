@@ -1,5 +1,6 @@
 import os
 import sys
+import mimetypes
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -19,10 +20,26 @@ from src.utils.auth import get_credentials
 
 # 🔹 FOLDER IDS
 SQLITE_BACKUP_FOLDER_ID = "1RZjb6ok7ub7lG_gYI5fecAkHAmIejSCm"
-CHROMA_BACKUP_FOLDER_ID = "1UzLrdaBuo96xnyvzc0ArqAm9Pn4sh_LG"
+QDRANT_BACKUP_FOLDER_ID = "1jFOnY3dsC7e8gnQg4Ntj7VEYk2mtDmRN"
+
+
+def delete_existing_file(service, folder_id, filename):
+    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+
+    results = service.files().list(
+        q=query,
+        fields="files(id, name)"
+    ).execute()
+
+    files = results.get("files", [])
+
+    for file in files:
+        service.files().delete(fileId=file["id"]).execute()
+        print(f"Deleted old file: {file['name']}")
 
 
 def upload_backup(file_path: str, backup_type: str):
+
     if not os.path.exists(file_path):
         raise FileNotFoundError("Backup file not found.")
 
@@ -33,19 +50,25 @@ def upload_backup(file_path: str, backup_type: str):
 
     if backup_type == "sqlite":
         folder_id = SQLITE_BACKUP_FOLDER_ID
-    elif backup_type == "chroma":
-        folder_id = CHROMA_BACKUP_FOLDER_ID
+    elif backup_type == "qdrant":
+        folder_id = QDRANT_BACKUP_FOLDER_ID
     else:
-        raise ValueError("Invalid backup type. Use 'sqlite' or 'chroma'.")
+        raise ValueError("Invalid backup type. Use 'sqlite' or 'qdrant'.")
+
+    #  DELETE OLD FILE FIRST
+    delete_existing_file(service, folder_id, filename)
 
     file_metadata = {
         "name": filename,
         "parents": [folder_id],
     }
 
+    mime_type, _ = mimetypes.guess_type(file_path)
+    mime_type = mime_type or "application/octet-stream"
+
     media = MediaFileUpload(
         file_path,
-        mimetype="application/gzip",
+        mimetype=mime_type,
         resumable=True,
     )
 

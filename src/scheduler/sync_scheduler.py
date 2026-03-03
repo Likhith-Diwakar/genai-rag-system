@@ -21,7 +21,7 @@ if PROJECT_ROOT not in sys.path:
 
 from src.ingestion.main import run_sync
 from scripts.backup_sqlite import backup_sqlite
-from scripts.backup_chroma import backup_chroma
+from scripts.backup_qdrant import backup_qdrant
 from scripts.upload_backup_to_drive import upload_backup
 
 # ----------------------------------------------------------
@@ -30,15 +30,13 @@ from scripts.upload_backup_to_drive import upload_backup
 
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-# Only ONE schedule time (for sync)
-SYNC_HOUR = 11
-SYNC_MINUTE = 20
+SYNC_HOUR = 14
+SYNC_MINUTE = 00
 
-# Delay (in seconds) between steps
-STEP_DELAY_SECONDS = 180  # 3 minutes
+STEP_DELAY_SECONDS = 20  # 2 minutes delay between steps
 
 # ----------------------------------------------------------
-# PIPELINE JOB (ORDER GUARANTEED)
+# PIPELINE JOB
 # ----------------------------------------------------------
 
 def run_full_pipeline():
@@ -47,7 +45,7 @@ def run_full_pipeline():
     print("========================================")
 
     # ------------------------------------------------------
-    # STEP 1: DRIVE SYNC (MANDATORY)
+    # STEP 1: DRIVE SYNC
     # ------------------------------------------------------
 
     print(f"[{datetime.now(TIMEZONE)}] Starting Drive Sync...")
@@ -57,10 +55,10 @@ def run_full_pipeline():
     except Exception as e:
         print(f"[{datetime.now(TIMEZONE)}] Drive Sync failed: {e}")
         print("Pipeline stopped. Backups will NOT run.")
-        return  # STOP PIPELINE
+        return
 
     # ------------------------------------------------------
-    # STEP 2: SQLITE BACKUP (OPTIONAL CONTINUE)
+    # STEP 2: SQLITE BACKUP
     # ------------------------------------------------------
 
     print(f"Waiting {STEP_DELAY_SECONDS} seconds before SQLite backup...")
@@ -68,27 +66,26 @@ def run_full_pipeline():
 
     print(f"[{datetime.now(TIMEZONE)}] Starting SQLite Backup...")
     try:
-        file_path = backup_sqlite()
-        upload_backup(file_path, "sqlite")
+        sqlite_path = backup_sqlite()
+        upload_backup(sqlite_path, "sqlite")
         print(f"[{datetime.now(TIMEZONE)}] SQLite Backup completed.")
     except Exception as e:
         print(f"[{datetime.now(TIMEZONE)}] SQLite Backup failed: {e}")
-        print("Continuing to Chroma backup...")
 
     # ------------------------------------------------------
-    # STEP 3: CHROMA BACKUP (ALWAYS AFTER SQLITE ATTEMPT)
+    # STEP 3: QDRANT SNAPSHOT BACKUP
     # ------------------------------------------------------
 
-    print(f"Waiting {STEP_DELAY_SECONDS} seconds before Chroma backup...")
+    print(f"Waiting {STEP_DELAY_SECONDS} seconds before Qdrant backup...")
     time.sleep(STEP_DELAY_SECONDS)
 
-    print(f"[{datetime.now(TIMEZONE)}] Starting Chroma Backup...")
+    print(f"[{datetime.now(TIMEZONE)}] Starting Qdrant Backup...")
     try:
-        file_path = backup_chroma()
-        upload_backup(file_path, "chroma")
-        print(f"[{datetime.now(TIMEZONE)}] Chroma Backup completed.")
+        qdrant_path = backup_qdrant()
+        upload_backup(qdrant_path, "qdrant")
+        print(f"[{datetime.now(TIMEZONE)}] Qdrant Backup completed.")
     except Exception as e:
-        print(f"[{datetime.now(TIMEZONE)}] Chroma Backup failed: {e}")
+        print(f"[{datetime.now(TIMEZONE)}] Qdrant Backup failed: {e}")
 
     print("========================================")
     print(f"[{datetime.now(TIMEZONE)}] Daily Pipeline Finished")
@@ -114,7 +111,7 @@ def start_scheduler():
     print("========================================")
     print("Scheduler Started (IST)")
     print(f"Daily Pipeline Time : {SYNC_HOUR:02d}:{SYNC_MINUTE:02d}")
-    print("Order: Sync → SQLite → Chroma")
+    print("Order: Sync → SQLite → Qdrant")
     print("========================================")
 
     try:
