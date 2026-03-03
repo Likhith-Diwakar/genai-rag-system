@@ -77,7 +77,6 @@ def generate_answer(query: str, k: int = 7):
     # GLOBAL TOP-K CONTEXT SELECTION (rank-aware, no collapse)
     # ---------------------------------------------------------
 
-    # Final ranking strictly by retriever score
     combined.sort(key=lambda x: x[2], reverse=True)
 
     MAX_CONTEXT_CHARS = 5000
@@ -110,28 +109,6 @@ def generate_answer(query: str, k: int = 7):
     if not selected_chunks:
         logger.warning("Context empty after global ranking.")
         return "I do not know based on the provided documents.", []
-
-    # ---------------------------------------------------------
-    # Dominant file detection (max-score, not sum)
-    # ---------------------------------------------------------
-
-    file_max_score = {}
-    file_name_map = {}
-
-    for doc, meta, score in selected_chunks:
-        fid = meta.get("file_id")
-        fname = meta.get("file_name", "UNKNOWN")
-
-        if fid not in file_max_score or score > file_max_score[fid]:
-            file_max_score[fid] = score
-            file_name_map[fid] = fname
-
-    dominant_file_id = max(file_max_score, key=file_max_score.get)
-    dominant_file_name = file_name_map[dominant_file_id]
-
-    logger.info(
-        f"Dominant file (max-score method) | file={dominant_file_name}"
-    )
 
     context = "\n\n".join([doc for doc, _, _ in selected_chunks])
 
@@ -184,6 +161,26 @@ Answer in a complete sentence:
 
     logger.info("LLM returned a grounded answer.")
 
-    return answer, [
-        {"file_id": dominant_file_id, "file_name": dominant_file_name}
-    ]
+    # ---------------------------------------------------------
+    # TRUE SOURCE DETECTION (Answer-aware attribution)
+    # ---------------------------------------------------------
+
+    answer_lower = answer.lower()
+    source_files = []
+
+    for doc, meta, score in selected_chunks:
+        if answer_lower[:80] in doc.lower():
+            source_files.append({
+                "file_id": meta.get("file_id"),
+                "file_name": meta.get("file_name", "UNKNOWN")
+            })
+
+    # Fallback to top-ranked chunk if no direct match found
+    if not source_files and selected_chunks:
+        top_meta = selected_chunks[0][1]
+        source_files.append({
+            "file_id": top_meta.get("file_id"),
+            "file_name": top_meta.get("file_name", "UNKNOWN")
+        })
+
+    return answer, source_files
