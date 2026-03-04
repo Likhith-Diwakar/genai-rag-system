@@ -83,13 +83,39 @@ with st.expander("Example questions you can ask"):
 
     st.markdown(
         """
-**ExoHabitAI Dataset**
+### ExoHabitAI Dataset
 - What is the objective of the ExoHabitAI dataset?
 - Which planetary parameters are used to evaluate habitability?
+- How is habitability predicted in the dataset?
 
-**Internship Certificate**
+### Internship Certificate
 - What does the No Objection Certificate state?
 - What internship duration is mentioned in the certificate?
+- Which organization issued the certificate?
+
+### Generative AI and LLMs
+- What is Generative AI?
+- How is Generative AI different from traditional AI?
+- What are Large Language Models (LLMs)?
+- What are foundation models?
+
+### AI Concepts
+- What is the transformer architecture?
+- What are vector embeddings?
+- Why are vector databases used in AI systems?
+- What is Retrieval-Augmented Generation (RAG)?
+
+### LLM Development
+- What is prompt engineering?
+- What is zero-shot prompting?
+- What is few-shot prompting?
+- What is in-context learning?
+
+### AI Project Lifecycle
+- What are the stages of the LLM project lifecycle?
+- How do you select the right LLM for a project?
+- What is fine-tuning in language models?
+- What is reinforcement learning from human feedback (RLHF)?
 """
     )
 
