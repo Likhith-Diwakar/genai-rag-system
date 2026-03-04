@@ -17,114 +17,53 @@ import streamlit as st
 
 from src.llm.rag import generate_answer
 from src.embedding.vector_store import VectorStore
-from src.ingestion.main import run_sync
 from src.utils.logger import logger
-
-# Scheduler
-from src.scheduler.sync_scheduler import run_full_pipeline
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-import pytz
-
-
-# ----------------------------------------------------------
-# STARTUP FAILSAFE SYNC
-# ----------------------------------------------------------
-
-def run_startup_sync():
-    """
-    Runs once during container startup.
-    Ensures Drive sync happens even if scheduler missed execution.
-    """
-    try:
-        logger.info("Running startup sync check...")
-
-        # run incremental sync (safe, ingestion pipeline skips existing files)
-        run_full_pipeline()
-
-        logger.info("Startup sync completed.")
-
-    except Exception as e:
-        logger.error(f"Startup sync failed: {e}")
-
-
-# ----------------------------------------------------------
-# FREE DAILY SCHEDULER (3 AM IST)
-# ----------------------------------------------------------
-
-def start_daily_scheduler():
-
-    timezone = pytz.timezone("Asia/Kolkata")
-
-    scheduler = BackgroundScheduler(timezone=timezone)
-
-    scheduler.add_job(
-        run_full_pipeline,
-        CronTrigger(hour=3, minute=0),
-        id="daily_pipeline",
-        replace_existing=True,
-    )
-
-    scheduler.start()
-
-    logger.info("Daily Scheduler Started (3:00 AM IST)")
 
 
 # ----------------------------------------------------------
 # PAGE CONFIG
 # ----------------------------------------------------------
 
-st.set_page_config(page_title="Google Drive RAG Chatbot", layout="wide")
+st.set_page_config(
+    page_title="Google Drive RAG Chatbot",
+    layout="wide"
+)
 
 st.title("Google Drive RAG Chatbot")
 st.caption("Ask questions over your Google Drive documents")
 
 
 # ----------------------------------------------------------
-# BOOTSTRAP VECTOR STORE (ONLY ON FIRST LOAD)
+# INITIALIZE VECTOR STORE (QUERY ONLY)
 # ----------------------------------------------------------
 
-if "bootstrapped" not in st.session_state:
+if "vector_store_initialized" not in st.session_state:
 
     try:
 
         vector_store = VectorStore()
 
-        # Run startup sync as failsafe
-        with st.spinner("Checking for new documents..."):
-            run_startup_sync()
+        total_vectors = vector_store.count()
 
-        # If vector store still empty, perform initial ingestion
-        if vector_store.count() == 0:
+        logger.info(f"Vector store connected | total_vectors={total_vectors}")
 
-            logger.info("Vector store empty. Running initial sync...")
+        if total_vectors == 0:
 
-            with st.spinner("Initializing document index (first startup)..."):
-                run_sync(verbose=True)
+            logger.warning(
+                "Vector store is empty. Ensure ingestion pipeline has run."
+            )
 
-            logger.info("Initial sync completed successfully.")
-
-    except Exception as e:
-        logger.error(f"Bootstrap sync failed: {e}")
-
-    st.session_state.bootstrapped = True
-
-
-# ----------------------------------------------------------
-# START DAILY SCHEDULER (ONLY ONCE)
-# ----------------------------------------------------------
-
-if "scheduler_started" not in st.session_state:
-
-    try:
-
-        start_daily_scheduler()
-
-        st.session_state.scheduler_started = True
+            st.warning(
+                "Document index is empty. Run the ingestion pipeline to load documents."
+            )
 
     except Exception as e:
 
-        logger.error(f"Scheduler failed to start: {e}")
+        logger.error(f"Vector store initialization failed: {e}")
+
+        st.error("Failed to connect to vector database.")
+
+    st.session_state.vector_store_initialized = True
 
 
 # ----------------------------------------------------------
@@ -189,7 +128,16 @@ if query:
 
         with st.spinner("Searching documents..."):
 
-            answer, sources = generate_answer(query)
+            try:
+
+                answer, sources = generate_answer(query)
+
+            except Exception as e:
+
+                logger.error(f"RAG pipeline failed: {e}")
+
+                answer = "An error occurred while processing your request."
+                sources = []
 
             st.markdown(answer)
 
