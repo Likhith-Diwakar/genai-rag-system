@@ -25,8 +25,20 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Install system dependency for PDF → image conversion
+      - name: Install poppler (required for pdf2image)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Run Daily Pipeline
-        run: python scripts/run_daily_sync.py
+        run: |
+          python scripts/run_daily_sync.py
