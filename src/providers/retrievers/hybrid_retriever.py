@@ -154,7 +154,9 @@ class HybridRetriever:
             chunk_key = f"{file_id}_{chunk_id}"
 
             scores[chunk_key] += 1.0 / (k_constant + rank + 1)
-            chunk_lookup[chunk_key] = (doc, meta)
+
+            if chunk_key not in chunk_lookup:
+                chunk_lookup[chunk_key] = (doc, meta)
 
         ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
@@ -294,6 +296,28 @@ class HybridRetriever:
             semantic_scored.append((doc, meta, final_score))
 
         semantic_scored.sort(key=lambda x: x[2], reverse=True)
+
+        # ----------------------------------------------
+        # Deduplicate semantic results
+        # ----------------------------------------------
+
+        seen = set()
+        deduped_semantic = []
+
+        for doc, meta, score in semantic_scored:
+
+            file_id = meta.get("file_id")
+            chunk_id = meta.get("chunk_id")
+
+            key = f"{file_id}_{chunk_id}"
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            deduped_semantic.append((doc, meta, score))
+
+        semantic_scored = deduped_semantic
 
         bm25_results = self.bm25.query(query, top_k=safe_n)
 
