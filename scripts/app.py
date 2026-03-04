@@ -20,7 +20,7 @@ from src.embedding.vector_store import VectorStore
 from src.ingestion.main import run_sync
 from src.utils.logger import logger
 
-# 🔹 Scheduler imports (FREE daily automation)
+# Scheduler
 from src.scheduler.sync_scheduler import run_full_pipeline
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -28,22 +28,45 @@ import pytz
 
 
 # ----------------------------------------------------------
+# STARTUP FAILSAFE SYNC
+# ----------------------------------------------------------
+
+def run_startup_sync():
+    """
+    Runs once during container startup.
+    Ensures Drive sync happens even if scheduler missed execution.
+    """
+    try:
+        logger.info("Running startup sync check...")
+
+        # run incremental sync (safe, ingestion pipeline skips existing files)
+        run_full_pipeline()
+
+        logger.info("Startup sync completed.")
+
+    except Exception as e:
+        logger.error(f"Startup sync failed: {e}")
+
+
+# ----------------------------------------------------------
 # FREE DAILY SCHEDULER (3 AM IST)
 # ----------------------------------------------------------
 
 def start_daily_scheduler():
+
     timezone = pytz.timezone("Asia/Kolkata")
 
     scheduler = BackgroundScheduler(timezone=timezone)
 
     scheduler.add_job(
         run_full_pipeline,
-        CronTrigger(hour=3, minute=0),  # 3:00 AM IST
+        CronTrigger(hour=3, minute=0),
         id="daily_pipeline",
         replace_existing=True,
     )
 
     scheduler.start()
+
     logger.info("Daily Scheduler Started (3:00 AM IST)")
 
 
@@ -64,9 +87,16 @@ st.caption("Ask questions over your Google Drive documents")
 if "bootstrapped" not in st.session_state:
 
     try:
+
         vector_store = VectorStore()
 
+        # Run startup sync as failsafe
+        with st.spinner("Checking for new documents..."):
+            run_startup_sync()
+
+        # If vector store still empty, perform initial ingestion
         if vector_store.count() == 0:
+
             logger.info("Vector store empty. Running initial sync...")
 
             with st.spinner("Initializing document index (first startup)..."):
@@ -85,10 +115,15 @@ if "bootstrapped" not in st.session_state:
 # ----------------------------------------------------------
 
 if "scheduler_started" not in st.session_state:
+
     try:
+
         start_daily_scheduler()
+
         st.session_state.scheduler_started = True
+
     except Exception as e:
+
         logger.error(f"Scheduler failed to start: {e}")
 
 
@@ -105,7 +140,9 @@ if "messages" not in st.session_state:
 # ----------------------------------------------------------
 
 for msg in st.session_state.messages:
+
     with st.chat_message(msg["role"]):
+
         st.markdown(msg["content"])
 
         if (
@@ -114,16 +151,22 @@ for msg in st.session_state.messages:
             and msg["content"].strip()
             != "I do not know based on the provided documents."
         ):
+
             with st.expander("Sources used"):
+
                 for s in msg["sources"]:
 
                     file_id = s.get("file_id")
                     file_name = s.get("file_name")
 
                     if file_id:
+
                         url = f"https://drive.google.com/file/d/{file_id}/view"
+
                         st.markdown(f"- 🔗 [{file_name}]({url})")
+
                     else:
+
                         st.markdown(f"- {file_name}")
 
 
@@ -143,6 +186,7 @@ if query:
         st.markdown(query)
 
     with st.chat_message("assistant"):
+
         with st.spinner("Searching documents..."):
 
             answer, sources = generate_answer(query)
@@ -154,16 +198,22 @@ if query:
                 != "I do not know based on the provided documents."
                 and sources
             ):
+
                 with st.expander("Sources used"):
+
                     for s in sources:
 
                         file_id = s.get("file_id")
                         file_name = s.get("file_name")
 
                         if file_id:
+
                             url = f"https://drive.google.com/file/d/{file_id}/view"
+
                             st.markdown(f"- 🔗 [{file_name}]({url})")
+
                         else:
+
                             st.markdown(f"- {file_name}")
 
     st.session_state.messages.append(
