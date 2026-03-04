@@ -1,7 +1,7 @@
 # GenAI RAG System
 ## Design, Implementation & Architecture Overview
 
-A modular, multi-format, hybrid-reasoning **Retrieval-Augmented Generation (RAG)** system designed for structured precision and reliable document-grounded responses.
+A modular, multi-format, hybrid-reasoning Retrieval-Augmented Generation (RAG) system designed for structured precision and reliable document-grounded responses.
 
 The system supports:
 
@@ -9,9 +9,11 @@ The system supports:
 - Vision-based extraction for scanned and chart-heavy PDFs
 - Format-aware adaptive chunking
 - Hosted semantic embeddings (HuggingFace Inference Router)
+- Hybrid semantic + lexical retrieval
 - Deterministic structured computation
-- Hybrid retrieval and structural re-ranking
-- Automated persistence and synchronization
+- Persistent vector storage with Qdrant Cloud
+- Automated Google Drive synchronization and backups
+- Production-ready cloud deployment via Render
 
 The architecture is modular, ingestion-safe, production-extensible, and optimized for grounding accuracy.
 
@@ -27,6 +29,7 @@ The architecture is modular, ingestion-safe, production-extensible, and optimize
 - [Format-Aware Adaptive Chunking](#format-aware-adaptive-chunking)
 - [Retrieval & Ranking Architecture](#retrieval--ranking-architecture)
 - [Automation & Persistence Layer](#automation--persistence-layer)
+- [Deployment Architecture](#deployment-architecture)
 - [High-Level Architecture](#high-level-architecture)
 - [Technical Stack](#technical-stack)
 - [Running the System](#running-the-system)
@@ -48,16 +51,19 @@ This repository contains an advanced Retrieval-Augmented Generation (RAG) system
 - Hybrid semantic + lexical retrieval
 - Deterministic structured numeric computation
 - Strict context-grounded answer generation
+- Automated document synchronization from Google Drive
 
-The system separates responsibilities cleanly between:
+The system separates responsibilities between:
 
+- Document ingestion
 - Vision extraction
-- Embedding layer (hosted inference)
-- Deterministic numeric reasoning
-- LLM-based semantic reasoning
-- Automated persistence and backup
+- Embedding generation
+- Vector storage
+- Hybrid retrieval
+- LLM reasoning
+- Persistence and backup
 
-The current implementation is **stable and demo-ready via Streamlit**.
+The current implementation is stable and deployed for demonstration using Streamlit on Render.
 
 ---
 
@@ -66,15 +72,18 @@ The current implementation is **stable and demo-ready via Streamlit**.
 ### End-to-End RAG Pipeline
 
 - Multi-format document ingestion
+- Google Drive ingestion synchronization
 - Format-aware extraction logic
 - Vision-based OCR for scanned and image-heavy PDFs
 - Structured table-aware chunking
 - Adaptive chunk sizing
-- Hosted semantic embeddings (`BAAI/bge-small-en-v1.5` via HuggingFace Inference Router)
-- Persistent vector storage (ChromaDB)
+- Hosted semantic embeddings (`BAAI/bge-small-en-v1.5`)
+- Persistent vector storage using Qdrant Cloud
 - SQLite metadata + structured storage
 - Hybrid semantic + lexical retrieval
-- Structural re-ranking boosts
+- BM25 sparse retrieval
+- Reciprocal Rank Fusion (RRF)
+- Context-aware ranking improvements
 - Deterministic CSV computation engine
 - Strict document-grounded prompting
 - Source attribution in UI
@@ -100,23 +109,22 @@ The system detects when vision-based extraction is required.
 
 ### Trigger Conditions
 
-- Chart-heavy pages (multiple raster images)
+- Chart-heavy pages
 - Sparse digital text
 - Fully scanned documents
-- Large graphical elements
-- Embedded image-based tables
+- Embedded graphical elements
+- Image-based tables
 
 ### Vision Strategy
 
 - Full-page conversion for chart-heavy pages
-- Gemini 2.5 Flash Vision for OCR and structured extraction
-- Per-image extraction when appropriate
+- Gemini 2.5 Flash Vision for OCR extraction
+- Image-based table reconstruction
 - Duplicate page hash prevention
-- API call cap to control quota usage
-- Structured normalization of extracted text
-- Markdown-style reconstruction for tables
+- Controlled API usage limits
+- Structured normalization of extracted content
 
-> **Note:** Vision is used strictly for ingestion and extraction, not for main RAG reasoning.
+> Vision processing is used only during document ingestion, not during retrieval.
 
 ---
 
@@ -127,25 +135,23 @@ The system detects when vision-based extraction is required.
 For structured CSV queries:
 
 - Detects numeric intent (max, min, avg, sum, count)
-- Dynamically identifies numeric columns
+- Identifies numeric columns dynamically
 - Uses Pandas for deterministic computation
-- Bypasses LLM for numeric calculation
-- Uses LLM only for explanation
+- LLM used only for explanation
 
 ### Structured PDF Tables
 
-- Preserves row integrity
-- Maintains contextual entity labels
-- Prevents cross-row contamination
-- Maintains numeric alignment
-- Supports accurate numeric comparisons
+- Row integrity preservation
+- Context-aware entity alignment
+- Prevention of cross-row contamination
+- Accurate numeric comparisons
 
 ### Benefits
 
-- Deterministic numeric outputs
-- Reduced hallucinations
-- Precision in structured queries
-- Clean reasoning-mode separation
+- Deterministic results for structured queries
+- Reduced hallucination risk
+- Improved numeric reasoning
+- Clean separation between deterministic and LLM reasoning
 
 ---
 
@@ -159,20 +165,19 @@ The ingestion pipeline dynamically selects chunking strategies.
 - Reduced fragmentation
 - Paragraph grouping
 - Table rows preserved as semantic units
-- Metadata embedded inside structured blocks
-- Reduced vector noise
+- Metadata embedded inside chunks
 
 ### Chart-Heavy Strategy
 
-- Entire page processed via Vision layer
+- Entire page processed through Vision extraction
 - Prevents fragmented image chunking
 - Preserves visual context
 
 ### CSV Strategy
 
 - Stored directly in SQLite
-- No embeddings required for deterministic numeric queries
-- Vector store used only when semantic retrieval is required
+- No embeddings required for numeric queries
+- Vector retrieval used only when semantic interpretation is needed
 
 ---
 
@@ -183,55 +188,104 @@ The system uses:
 - Hosted embeddings via HuggingFace Inference Router
 - `BAAI/bge-small-en-v1.5`
 - Normalized embeddings
-- Persistent ChromaDB vector store
+- Persistent Qdrant Cloud vector store
 
-### Hybrid Re-Ranking Signals
+### Hybrid Retrieval Strategy
 
-- Semantic similarity
-- Keyword overlap
-- Exact phrase boost
-- Numeric alignment boost
-- Structured row density boost
-- Table integrity scoring
-- Vision-content priority boost
+Retrieval combines multiple signals:
 
-### LLM Layer
+- Semantic embedding search
+- BM25 lexical retrieval
+- Reciprocal Rank Fusion (RRF)
 
-**Primary Model:** `llama-3.3-70b-versatile`  
-**Fallback Model:** `llama-3.1-8b-instant`  
-Both served via **Groq**.
+This ensures robustness for both semantic and keyword-based queries.
 
-### LLM Behavior
+### Retrieval Enhancements
 
-- Strict context-bound prompting
-- Deterministic temperature (0.1)
-- No document-specific hardcoding
-- No entity rule injection
+Additional ranking signals include:
+
+- Keyword overlap scoring
+- Exact phrase boosting
+- File name alignment
+- Numeric reference detection
+- Structured chunk detection
+- Vision content priority
+- Entity density scoring
+
+### Context Selection Improvements
+
+To improve retrieval reliability:
+
+- Global Top-K chunk selection
+- Removal of file-level score aggregation
+- Rank-aware chunk selection
+- Context size limits to maintain LLM efficiency
+
+This prevents dominance of documents with many chunks.
+
+### Source Attribution
+
+Source attribution uses:
+
+- Answer-aware chunk detection
+- Chunk-level provenance tracking
+
+This ensures that UI source links correspond to the actual document used to generate the answer.
 
 ---
 
 ## Automation & Persistence Layer
 
-### APScheduler Jobs
+### Google Drive Synchronization
 
-- Daily Google Drive ingestion sync
-- Scheduled vector backup
-- Scheduled metadata backup
+The system supports automated ingestion from Google Drive. Documents can be synced periodically to ensure the vector index stays up-to-date.
 
-### Persistence Strategy
+### Backup Strategy
 
+Two independent backup mechanisms are implemented:
+
+**Metadata Backup**
 - SQLite → Pickle serialization → Google Drive
-- ChromaDB → tar.gz compression → Google Drive
-- Controlled rehydration on restart
+- Ensures that structured metadata can be restored
+
+**Vector Store Backup**
+- Qdrant → Snapshot → Google Drive
+- Vector index snapshots are periodically stored in Drive for recovery
+
+### Rehydration
+
+On restart, the system can restore metadata, vector database state, and document indexing from backup artifacts.
+
+---
+
+## Deployment Architecture
+
+The application is deployed using Render.
+
+**Deployment characteristics:**
+
+- Python environment
+- Streamlit application
+- Qdrant Cloud remote vector database
+- Hosted embedding inference
+- Groq LLM API
+
+**Render provides:**
+
+- Automatic deployment from GitHub
+- Containerized environment
+- Public endpoint for chatbot interface
+
+The deployment uses a lightweight configuration suitable for prototype and demonstration environments.
 
 ---
 
 ## High-Level Architecture
 
 ```
-Input Sources (Google Drive / Azure / Local)
+Google Drive / Local Documents
           │
-   Controlled Ingestion
+   Controlled Ingestion Pipeline
           │
    Format-Aware Extraction
           │
@@ -239,21 +293,21 @@ Input Sources (Google Drive / Azure / Local)
           │
  Adaptive Chunking
           │
- HuggingFace Hosted Embeddings (bge-small-en-v1.5)
+ HuggingFace Hosted Embeddings
           │
- ChromaDB (Vector Store)
+ Qdrant Cloud (Vector Store)
           │
- SQLite (Structured + Metadata)
+ SQLite Metadata Store
           │
- Hybrid Retrieval + Structural Re-Ranking
+ Hybrid Retrieval
+ (Semantic + BM25 + RRF)
           │
- Deterministic Engine (Pandas for CSV)
+ Context Selection
+ (Global Top-K Chunks)
           │
- Groq Llama 3.3 (Primary)
+ Groq Llama 3.3
           │
- Groq Llama 3.1 (Fallback)
-          │
- Streamlit Interface
+ Streamlit Interface (Render)
 ```
 
 ---
@@ -264,47 +318,52 @@ Input Sources (Google Drive / Azure / Local)
 |-----------|------------|
 | Language | Python |
 | PDF Extraction | pdfplumber |
-| Vision/OCR | Gemini 2.5 Flash |
+| Vision OCR | Gemini 2.5 Flash |
 | DOCX Parsing | python-docx |
 | Structured Data | Pandas |
-| Embeddings | HuggingFace Inference Router (`BAAI/bge-small-en-v1.5`) |
-| Vector Store | ChromaDB |
+| Embeddings | HuggingFace Inference Router |
+| Embedding Model | `BAAI/bge-small-en-v1.5` |
+| Vector Store | Qdrant Cloud |
 | Metadata Store | SQLite |
+| Sparse Retrieval | BM25 |
+| Fusion Algorithm | Reciprocal Rank Fusion |
 | LLM Backend | Groq |
 | Primary Model | `llama-3.3-70b-versatile` |
 | Fallback Model | `llama-3.1-8b-instant` |
 | Scheduler | APScheduler |
-| Persistence | Google Drive Backups |
+| Backup Storage | Google Drive |
 | Frontend | Streamlit |
+| Deployment | Render |
 
 ---
 
 ## Running the System
 
-### 1️⃣ Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2️⃣ Set Environment Variables
+### 2. Set Environment Variables
 
 Create a `.env` file:
 
 ```
-GROQ_API_KEY=your_key_here
-GEMINI_API_KEY=your_key_here
-HF_API_KEY=your_huggingface_token
-POPPLER_PATH=optional_windows_path_if_needed
+GROQ_API_KEY=your_key
+GEMINI_API_KEY=your_key
+HF_API_KEY=your_key
+QDRANT_URL=your_cluster_url
+QDRANT_API_KEY=your_key
 ```
 
-### 3️⃣ Ingest Documents
+### 3. Run Ingestion
 
 ```bash
 python -m src.ingestion.main
 ```
 
-### 4️⃣ Launch UI
+### 4. Launch UI
 
 ```bash
 streamlit run scripts/app.py
@@ -320,37 +379,41 @@ http://localhost:8501
 
 ## Repository Status
 
-###  Stable
+Stable implementation currently includes:
 
-- Multi-format ingestion
-- Gemini-based Vision OCR
-- Structured PDF table preservation
+- Multi-format ingestion pipeline
+- Gemini Vision OCR integration
+- Structured PDF table extraction
 - Deterministic CSV computation
 - Hybrid semantic + lexical retrieval
-- Structural re-ranking boosts
-- Hosted embedding inference
-- Persistent vector storage
-- APScheduler background jobs
-- Google Drive auto-sync
-- Automated vector + metadata backup
+- BM25 + RRF ranking
+- Qdrant Cloud vector storage
+- Google Drive ingestion synchronization
+- SQLite metadata persistence
+- Qdrant snapshot backup
+- Automated backup workflows
+- Streamlit UI deployment on Render
 
 ---
 
 ## System Characteristics
 
 - No document-specific hardcoding
-- Fully data-driven ranking
+- Retrieval fully data-driven
 - Deterministic numeric reasoning
-- Hosted embedding inference (no local model dependency)
-- Production-extensible architecture
-- Backup-safe and crash-resilient
+- Hybrid retrieval improves recall and ranking stability
+- Cloud-hosted embeddings
+- Remote vector storage
+- Backup-safe architecture
+- Modular design supporting future scaling
 
 ---
 
 ## Next Phase
 
-- FastAPI backend migration
+Future development goals include:
+
+- FastAPI backend architecture
 - Docker containerization
-- Cloud deployment
+- Scalable multi-instance deployment
 - Observability and monitoring
-- Structured logging cleanup
