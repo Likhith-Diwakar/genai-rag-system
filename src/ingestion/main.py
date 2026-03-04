@@ -12,7 +12,7 @@ from src.ingestion.download_file import download_drive_file
 
 from src.providers.parsers.parser_router import ParserRouter
 from src.providers.embeddings.bge_embedder import BGEEmbedder
-from src.providers.vectorstores.chroma_store import ChromaVectorStore
+from src.embedding.vector_store import VectorStore
 from src.providers.chunking.chunking_router import ChunkingRouter
 from src.providers.retrievers.bm25_retriever import BM25Retriever
 
@@ -29,7 +29,7 @@ CSV_MIME = "text/csv"
 
 def main():
 
-    vector_store = ChromaVectorStore()
+    vector_store = VectorStore()
     embedder = BGEEmbedder()
     tracker = TrackerDB()
     sqlite_store = SQLiteStore()
@@ -37,8 +37,9 @@ def main():
     chunk_router = ChunkingRouter()
 
     # -------------------------------
-    # NEW: Initialize BM25
+    # Initialize BM25
     # -------------------------------
+
     bm25 = BM25Retriever()
     bm25.load()
 
@@ -93,8 +94,9 @@ def main():
         try:
 
             # -------------------------------
-            # CSV → SQLite (special case)
+            # CSV → SQLite
             # -------------------------------
+
             if mime_type == CSV_MIME:
 
                 parser = parser_router.route(file_name)
@@ -106,6 +108,7 @@ def main():
             # -------------------------------
             # Google Docs
             # -------------------------------
+
             if mime_type == GOOGLE_DOC_MIME:
                 parser = parser_router.route(file_name)
                 text = parser.parse(file_id)
@@ -113,6 +116,7 @@ def main():
             # -------------------------------
             # DOCX / PDF
             # -------------------------------
+
             elif mime_type in [DOCX_MIME, PDF_MIME]:
 
                 with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -129,34 +133,38 @@ def main():
                 continue
 
         except Exception:
+
             logger.warning(f"Extraction failed → {file_name}")
             tracker.mark_ingested(file_id, file_name)
             continue
 
         if not text or not text.strip():
+
             logger.warning(f"No text extracted → {file_name}")
             tracker.mark_ingested(file_id, file_name)
             continue
 
         # -------------------------------
-        # Chunking (MODULAR)
+        # Chunking
         # -------------------------------
 
         chunker = chunk_router.route(mime_type)
         chunks = chunker.chunk(text)
 
         if not chunks:
+
             logger.warning(f"No chunks created → {file_name}")
             tracker.mark_ingested(file_id, file_name)
             continue
 
         # -------------------------------
-        # Embedding (Dense lane)
+        # Embedding
         # -------------------------------
 
         embeddings = embedder.embed(chunks)
 
         ids = [f"{file_id}_{i}" for i in range(len(chunks))]
+
         metadatas = [
             {
                 "file_id": file_id,
@@ -174,7 +182,7 @@ def main():
         )
 
         # -------------------------------
-        # NEW: Sparse lane (BM25)
+        # BM25
         # -------------------------------
 
         bm25.add_chunks(

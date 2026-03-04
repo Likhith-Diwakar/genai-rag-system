@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 
 from src.providers.embeddings.bge_embedder import BGEEmbedder
-from src.providers.vectorstores.chroma_store import ChromaVectorStore
+from src.embedding.vector_store import VectorStore
 from src.providers.retrievers.bm25_retriever import BM25Retriever
 from src.utils.logger import logger
 
@@ -13,7 +13,7 @@ class HybridRetriever:
 
     def __init__(self):
         self.embedder = BGEEmbedder()
-        self.vector_store = ChromaVectorStore()
+        self.vector_store = VectorStore()
         self.bm25 = BM25Retriever()
         self.bm25.load()
 
@@ -190,8 +190,6 @@ class HybridRetriever:
         final_metas = []
         final_scores = []
 
-        # Pass 1: enforce max chunks per file
-
         for doc, meta, score in zip(docs, metas, scores):
 
             file_name = meta.get("file_name", "unknown")
@@ -206,8 +204,6 @@ class HybridRetriever:
 
             if len(final_docs) >= top_k:
                 return final_docs, final_metas, final_scores
-
-        # Pass 2: fill remaining slots if needed
 
         for doc, meta, score in zip(docs, metas, scores):
 
@@ -233,39 +229,32 @@ class HybridRetriever:
         except Exception:
 
             logger.exception("Failed to embed query")
-
             return [], [], []
-
-        # Larger candidate pool improves recall
 
         CANDIDATE_MULTIPLIER = 8
         desired_n = k * CANDIDATE_MULTIPLIER
 
         try:
-
             collection_count = self.vector_store.count()
 
         except Exception:
 
             logger.warning("Could not fetch collection count. Defaulting candidate pool to k.")
-
             collection_count = k
 
         safe_n = max(1, min(desired_n, collection_count))
 
         logger.info(
-            f"ChromaDB collection size: {collection_count} | "
+            f"Vector store collection size: {collection_count} | "
             f"fetching top {safe_n} candidates for semantic lane"
         )
 
         try:
-
             results = self.vector_store.query(query_embedding, safe_n)
 
         except Exception:
 
             logger.exception("Vector store query failed")
-
             return [], [], []
 
         documents = results.get("documents", [[]])[0]
@@ -275,7 +264,6 @@ class HybridRetriever:
         if not documents:
 
             logger.warning("No results returned from vector store")
-
             return [], [], []
 
         semantic_scored = []
@@ -285,17 +273,11 @@ class HybridRetriever:
             semantic_score = max(0, 1 - dist) if dist is not None else 0
 
             keyword_score = self._keyword_score(query, doc)
-
             phrase_boost = self._exact_phrase_boost(query, doc)
-
             file_boost = self._file_name_boost(query, meta.get("file_name", ""))
-
             number_boost = self._numbered_reference_boost(query, doc)
-
             structure_boost = self._structured_chunk_boost(doc)
-
             vision_boost = self._vision_chunk_boost(doc)
-
             entity_boost = self._entity_density_boost(query, doc)
 
             final_score = (

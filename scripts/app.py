@@ -1,9 +1,6 @@
 import sys
 import os
 
-# ----------------------------------------------------------
-# FIX PYTHON PATH (so 'src' can be imported correctly)
-# ----------------------------------------------------------
 
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -18,6 +15,7 @@ import streamlit as st
 from src.llm.rag import generate_answer
 from src.embedding.vector_store import VectorStore
 from src.utils.logger import logger
+from scripts.restore_sqlite_from_drive import restore_sqlite_if_missing
 
 
 # ----------------------------------------------------------
@@ -34,12 +32,22 @@ st.caption("Ask questions over your Google Drive documents")
 
 
 # ----------------------------------------------------------
-# INITIALIZE VECTOR STORE (QUERY ONLY)
+# STARTUP CHECKS (RUN ONLY ONCE PER SESSION)
 # ----------------------------------------------------------
 
-if "vector_store_initialized" not in st.session_state:
+if "startup_completed" not in st.session_state:
 
     try:
+
+        # --------------------------------------------------
+        # Restore SQLite if missing (Render restart safety)
+        # --------------------------------------------------
+
+        restore_sqlite_if_missing()
+
+        # --------------------------------------------------
+        # Connect to Vector Store (Qdrant)
+        # --------------------------------------------------
 
         vector_store = VectorStore()
 
@@ -59,11 +67,11 @@ if "vector_store_initialized" not in st.session_state:
 
     except Exception as e:
 
-        logger.error(f"Vector store initialization failed: {e}")
+        logger.error(f"Startup initialization failed: {e}")
 
-        st.error("Failed to connect to vector database.")
+        st.error("Failed to initialize system.")
 
-    st.session_state.vector_store_initialized = True
+    st.session_state.startup_completed = True
 
 
 # ----------------------------------------------------------
