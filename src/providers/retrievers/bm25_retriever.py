@@ -20,6 +20,7 @@ class BM25Retriever:
         self.metadata_refs: List[Dict] = []
         self.bm25 = None
         self.vector_store = VectorStore()
+        self._rebuilt_from_vector_store = False
 
     # -----------------------------
     # Tokenization
@@ -44,9 +45,15 @@ class BM25Retriever:
     # -----------------------------
     def _load_from_vector_store(self):
 
+        if self._rebuilt_from_vector_store:
+            return
+
         logger.info("Rebuilding BM25 index from vector store")
 
         try:
+
+            self.corpus = []
+            self.metadata_refs = []
 
             offset = None
 
@@ -87,6 +94,8 @@ class BM25Retriever:
             self._build_index()
             self._persist()
 
+            self._rebuilt_from_vector_store = True
+
         except Exception:
             logger.exception("Failed rebuilding BM25 from vector store")
 
@@ -112,6 +121,9 @@ class BM25Retriever:
         if not self.bm25:
 
             logger.warning("BM25 index not initialized.")
+
+            if not self.corpus:
+                self.load()
 
             if not self.corpus:
                 self._load_from_vector_store()
@@ -158,6 +170,9 @@ class BM25Retriever:
                 "metadata_refs": self.metadata_refs
             }, f)
 
+    # -----------------------------
+    # Load saved index
+    # -----------------------------
     def load(self):
 
         if not os.path.exists(self.persist_path):
