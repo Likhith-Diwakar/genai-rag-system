@@ -1,8 +1,14 @@
 # src/llm/rag.py
 
 import re
+
 from src.providers.llm.groq_llm import GroqLLM
+from src.providers.llm.openrouter_llm import OpenRouterLLM
+from src.providers.llm.gemini_llm import GeminiLLM
+
 from src.providers.retrievers.hybrid_retriever import HybridRetriever
+from src.llm.llm_router import route_llm
+
 from src.utils.logger import logger
 
 
@@ -74,7 +80,7 @@ def generate_answer(query: str, k: int = 7):
         logger.info("Applied lexical alignment re-ranking.")
 
     # ---------------------------------------------------------
-    # GLOBAL TOP-K CONTEXT SELECTION (rank-aware, no collapse)
+    # GLOBAL TOP-K CONTEXT SELECTION
     # ---------------------------------------------------------
 
     combined.sort(key=lambda x: x[2], reverse=True)
@@ -132,8 +138,7 @@ Instructions:
 4. Return exact numbers and percentages as written.
 5. Do not combine rows unless explicitly asked.
 6. Perform arithmetic only if explicitly requested.
-7. Include units if present.
-8. If the answer does not clearly appear in the context,
+7. If the answer does not clearly appear in the context,
 respond exactly with:
 "I do not know based on the provided documents."
 """
@@ -148,7 +153,30 @@ Question:
 Answer in a complete sentence:
 """
 
-    llm = GroqLLM()
+    # ---------------------------------------------------------
+    # MODEL ROUTING
+    # ---------------------------------------------------------
+
+    model_name = route_llm(query)
+
+    logger.info(f"Router selected model: {model_name}")
+
+    if model_name == "groq":
+        llm = GroqLLM()
+
+    elif model_name == "gpt4o":
+        llm = OpenRouterLLM("openai/gpt-4o-mini")
+
+    elif model_name == "claude":
+        llm = OpenRouterLLM("anthropic/claude-3-haiku")
+
+    elif model_name == "gemini":
+        llm = GeminiLLM()
+
+    else:
+        logger.warning("Router returned unknown model. Falling back to Groq.")
+        llm = GroqLLM()
+
     answer = llm.generate(system_message, user_message)
 
     if (
@@ -162,7 +190,7 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION (Answer-aware attribution)
+    # TRUE SOURCE DETECTION
     # ---------------------------------------------------------
 
     answer_lower = answer.lower()
@@ -175,7 +203,6 @@ Answer in a complete sentence:
                 "file_name": meta.get("file_name", "UNKNOWN")
             })
 
-    # Fallback to top-ranked chunk if no direct match found
     if not source_files and selected_chunks:
         top_meta = selected_chunks[0][1]
         source_files.append({
