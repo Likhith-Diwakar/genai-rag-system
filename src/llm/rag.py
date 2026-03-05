@@ -190,21 +190,17 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION (FIXED)
+    # TRUE SOURCE DETECTION (SINGLE BEST SOURCE)
     # ---------------------------------------------------------
 
     source_files = []
-    seen_files = set()
 
-    for _, meta, _ in selected_chunks:
-        file_id = meta.get("file_id")
-        file_name = meta.get("file_name", "UNKNOWN")
+    if selected_chunks:
+        top_meta = selected_chunks[0][1]
 
-        if file_id and file_id not in seen_files:
-            source_files.append({
-                "file_id": file_id,
-                "file_name": file_name
-            })
-            seen_files.add(file_id)
+        source_files.append({
+            "file_id": top_meta.get("file_id"),
+            "file_name": top_meta.get("file_name", "UNKNOWN")
+        })
 
     return answer, source_files
