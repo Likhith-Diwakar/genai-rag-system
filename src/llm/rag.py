@@ -190,24 +190,21 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION
+    # TRUE SOURCE DETECTION (FIXED)
     # ---------------------------------------------------------
 
-    answer_lower = answer.lower()
     source_files = []
+    seen_files = set()
 
-    for doc, meta, score in selected_chunks:
-        if answer_lower[:80] in doc.lower():
+    for _, meta, _ in selected_chunks:
+        file_id = meta.get("file_id")
+        file_name = meta.get("file_name", "UNKNOWN")
+
+        if file_id and file_id not in seen_files:
             source_files.append({
-                "file_id": meta.get("file_id"),
-                "file_name": meta.get("file_name", "UNKNOWN")
+                "file_id": file_id,
+                "file_name": file_name
             })
-
-    if not source_files and selected_chunks:
-        top_meta = selected_chunks[0][1]
-        source_files.append({
-            "file_id": top_meta.get("file_id"),
-            "file_name": top_meta.get("file_name", "UNKNOWN")
-        })
+            seen_files.add(file_id)
 
     return answer, source_files
