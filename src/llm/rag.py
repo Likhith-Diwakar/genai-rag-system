@@ -190,27 +190,27 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION (ANSWER-CONTAINING SOURCE)
+    # TRUE SOURCE DETECTION (QUERY-ALIGNED SOURCE)
     # ---------------------------------------------------------
 
     source_files = []
-    answer_lower = answer.lower()
+    query_tokens = set(re.findall(r"\b[a-zA-Z]{3,}\b", query.lower()))
+
+    best_match = None
+    best_score = -1
 
     for doc, meta, _ in selected_chunks:
-        if answer_lower[:50] in doc.lower():
+        doc_tokens = set(re.findall(r"\b[a-zA-Z]{3,}\b", doc.lower()))
+        overlap = len(query_tokens.intersection(doc_tokens))
 
-            source_files.append({
-                "file_id": meta.get("file_id"),
-                "file_name": meta.get("file_name", "UNKNOWN")
-            })
-            break
+        if overlap > best_score:
+            best_score = overlap
+            best_match = meta
 
-    if not source_files and selected_chunks:
-        top_meta = selected_chunks[0][1]
-
+    if best_match:
         source_files.append({
-            "file_id": top_meta.get("file_id"),
-            "file_name": top_meta.get("file_name", "UNKNOWN")
+            "file_id": best_match.get("file_id"),
+            "file_name": best_match.get("file_name", "UNKNOWN")
         })
 
     return answer, source_files
