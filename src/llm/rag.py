@@ -190,12 +190,22 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION (SINGLE BEST SOURCE)
+    # TRUE SOURCE DETECTION (ANSWER-CONTAINING SOURCE)
     # ---------------------------------------------------------
 
     source_files = []
+    answer_lower = answer.lower()
 
-    if selected_chunks:
+    for doc, meta, _ in selected_chunks:
+        if answer_lower[:50] in doc.lower():
+
+            source_files.append({
+                "file_id": meta.get("file_id"),
+                "file_name": meta.get("file_name", "UNKNOWN")
+            })
+            break
+
+    if not source_files and selected_chunks:
         top_meta = selected_chunks[0][1]
 
         source_files.append({
