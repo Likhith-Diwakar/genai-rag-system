@@ -22,9 +22,9 @@ from scripts.restore_sqlite_from_drive import restore_sqlite_if_missing
 # ----------------------------------------------------------
 
 NO_CONTEXT_MESSAGE = (
-    "I could not find relevant information in the indexed documents. "
+    "I'm sorry, but I couldn't find relevant information in the indexed documents. "
     "Please try asking a more specific question related to the documents "
-    "available in the  Google Drive."
+    "available in the connected Google Drive."
 )
 
 
