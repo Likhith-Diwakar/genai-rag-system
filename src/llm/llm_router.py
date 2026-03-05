@@ -13,9 +13,6 @@ MODEL_REGISTRY = {
     },
     "claude": {
         "description": "Excellent at long explanations, detailed reasoning, document understanding, and deep analysis"
-    },
-    "gemini": {
-        "description": "Best for multimodal understanding including charts, graphs, images, scanned documents and visual data"
     }
 }
 
