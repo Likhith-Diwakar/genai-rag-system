@@ -20,6 +20,7 @@
 - [High-Level Architecture](#high-level-architecture)
 - [Technical Stack](#technical-stack)
 - [Running Locally](#running-locally)
+- [Docker Deployment](#docker-deployment)
 - [Repository Status](#repository-status)
 - [System Characteristics](#system-characteristics)
 - [Next Phase](#next-phase)
@@ -30,9 +31,9 @@
 
 The chatbot is deployed and accessible here:
 
-🔗 **[https://genai-rag-system.onrender.com](https://genai-rag-system.onrender.com)**
+**[https://genai-rag-system-docker-github.onrender.com](https://genai-rag-system-docker-github.onrender.com)**
 
-Deployed on **Render Cloud**. The chatbot interface is served independently from ingestion and indexing, which run via scheduled automation.
+Deployed on **Render Cloud** using Docker containers. The chatbot interface is served independently from ingestion and indexing, which run via scheduled automation.
 
 ---
 
@@ -43,6 +44,7 @@ This repository contains an advanced Retrieval-Augmented Generation (RAG) system
 The system supports multiple document types and automatically adapts its ingestion strategy depending on document structure.
 
 **Supported document types:**
+
 - PDF (text-based)
 - PDF (scanned)
 - Chart-heavy PDFs
@@ -68,6 +70,7 @@ The architecture separates **document ingestion**, **vector indexing**, and **ch
 | Rank fusion | Reciprocal Rank Fusion (RRF) |
 | LLM routing | Dynamic multi-model selection |
 | Source attribution | Document provenance shown in UI |
+| Containerized deployment | Docker-based reproducible runtime environment |
 
 ---
 
@@ -91,6 +94,7 @@ The ingestion pipeline automatically detects when visual processing is required.
 ### Trigger Conditions
 
 Vision extraction is triggered when:
+
 - Pages contain charts or diagrams
 - Documents contain very little digital text
 - Pages are fully scanned
@@ -110,7 +114,7 @@ Structured text reconstruction
 Chunk generation
 ```
 
-> **Note:** Vision processing occurs **only during ingestion**, never during retrieval.
+> Vision processing occurs **only during ingestion**, never during retrieval.
 
 ---
 
@@ -123,14 +127,18 @@ The system separates reasoning strategies for structured and unstructured data.
 Structured numeric queries bypass LLM reasoning entirely.
 
 ```
-Query → Intent detection
-      → Pandas computation
-      → LLM natural language explanation
+Query
+    ↓
+Intent detection
+    ↓
+Pandas computation
+    ↓
+LLM natural language explanation
 ```
 
-This prevents hallucinations and ensures **deterministic, reproducible results**.
-
 **Supported numeric operations:** `max`, `min`, `average`, `sum`, comparisons
+
+This ensures deterministic numeric reasoning and prevents hallucinations.
 
 ### Structured PDF Tables
 
@@ -146,15 +154,18 @@ This prevents hallucinations and ensures **deterministic, reproducible results**
 Chunking strategy is dynamically selected based on the detected document format.
 
 ### PDF Strategy
+
 - Paragraph grouping with larger context windows
 - Reduced fragmentation across sections
 - Table rows preserved as atomic semantic units
 
 ### Chart-Heavy PDFs
+
 - Entire page processed through Vision extraction
 - Prevents fragmentation of visual and diagrammatic content
 
 ### CSV Strategy
+
 - Stored directly in SQLite — no embeddings required for numeric queries
 - Vector embeddings used only when semantic interpretation is needed
 
@@ -174,7 +185,7 @@ Dense Embedding Search
 Reciprocal Rank Fusion (RRF)
 ```
 
-This hybrid approach significantly improves recall and ranking stability over dense-only search.
+This hybrid approach improves recall and ranking stability over dense-only search.
 
 ### Embedding Configuration
 
@@ -201,7 +212,7 @@ Additional post-fusion ranking signals improve retrieval quality:
 
 ### Context Selection
 
-- Global Top-K chunk selection (no per-file aggregation)
+- Global Top-K chunk selection with no per-file aggregation
 - Rank-aware selection with context size limits
 - Prevents single-document dominance
 - Ensures balanced, diverse context construction
@@ -241,6 +252,7 @@ Schedule: Daily at 3:00 AM IST
 ```
 
 Each run performs:
+
 1. Google Drive synchronization
 2. Document extraction
 3. Chunk generation
@@ -252,7 +264,7 @@ Each run performs:
 
 Two independent backup layers guarantee full index recoverability.
 
-#### Metadata Backup
+**Metadata Backup**
 
 ```
 SQLite DB
@@ -264,7 +276,7 @@ Gzip compression
 Upload to Google Drive  →  sqlite_latest.pkl.gz
 ```
 
-#### Vector Store Backup
+**Vector Store Backup**
 
 ```
 Qdrant Snapshot
@@ -294,17 +306,18 @@ This enables instant chatbot boot without re-indexing documents.
 
 ## Deployment Architecture
 
-The chatbot is deployed on **Render**.
+The chatbot is deployed on **Render** using Docker containers.
 
 | Task | Render | GitHub Actions |
 |---|:---:|:---:|
-| Streamlit chatbot UI | ✅ | ❌ |
-| Retrieval & generation | ✅ | ❌ |
-| Vector store connection | ✅ | ❌ |
-| SQLite restoration | ✅ | ❌ |
-| Document ingestion | ❌ | ✅ |
-| Embedding generation | ❌ | ✅ |
-| Google Drive sync | ❌ | ✅ |
+| Streamlit chatbot UI | Yes | No |
+| Retrieval & generation | Yes | No |
+| Vector store connection | Yes | No |
+| SQLite restoration | Yes | No |
+| Docker container runtime | Yes | No |
+| Document ingestion | No | Yes |
+| Embedding generation | No | Yes |
+| Google Drive sync | No | Yes |
 
 This separation enables faster deployments, stable indexing, and reduced compute costs.
 
@@ -337,7 +350,10 @@ SQLite Metadata Store
 Drive Backup (SQLite + Qdrant Snapshots)
       │
       ▼
-Render — Streamlit App
+Docker Container (Render)
+      │
+      ▼
+Streamlit Chatbot
       │
       ▼
 Hybrid Retrieval (Dense + BM25 + RRF)
@@ -369,6 +385,7 @@ Groq / GPT-4o Mini / Claude Haiku
 | LLM Providers | Groq, OpenRouter |
 | Router Model | Groq |
 | Frontend | Streamlit |
+| Containerization | Docker |
 | Deployment | Render |
 | Scheduler | GitHub Actions |
 | Backup Storage | Google Drive |
@@ -408,11 +425,27 @@ python scripts/run_daily_sync.py
 streamlit run scripts/app.py
 ```
 
-Open in browser:
+Open in browser: `http://localhost:8501`
 
+---
+
+## Docker Deployment
+
+### Build the Image
+
+```bash
+docker build -t genai-rag-system .
 ```
-http://localhost:8501
+
+### Run the Container
+
+```bash
+docker run -p 8501:8501 genai-rag-system
 ```
+
+Open in browser: `http://localhost:8501`
+
+The container exposes the Streamlit service on port `8501`.
 
 ---
 
@@ -426,13 +459,14 @@ http://localhost:8501
 - [x] Qdrant Cloud vector storage
 - [x] Google Drive ingestion synchronization
 - [x] SQLite metadata persistence
-- [x] Incremental indexing (no re-processing)
+- [x] Incremental indexing with no re-processing
 - [x] Scheduled GitHub Actions ingestion
-- [x] Drive backup for SQLite + Qdrant snapshots
+- [x] Drive backup for SQLite and Qdrant snapshots
 - [x] Fast startup restoration on Render
 - [x] Multi-LLM routing
 - [x] Source attribution in UI
-- [x] Streamlit deployment on Render
+- [x] Docker containerization
+- [x] Render cloud hosting
 
 ---
 
@@ -444,10 +478,11 @@ http://localhost:8501
 - **Cloud-native** — hosted embeddings, remote vector store, and cloud backups
 - **Backup-safe** — full index recovery from Drive artifacts
 - **Modular design** — ingestion, retrieval, and serving are independently extensible
+- **Fully containerized runtime** — consistent, reproducible environments via Docker
 
 ---
 
 ## Next Phase
 
-- [ ] FastAPI backend architecture
-- [ ] Docker containerization
+- [ ] FastAPI backend service
+- [ ] API gateway for external integrations
