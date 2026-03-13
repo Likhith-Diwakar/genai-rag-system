@@ -1,6 +1,6 @@
 # GenAI RAG System
 
-> A production-oriented Retrieval-Augmented Generation (RAG) system capable of handling structured and unstructured documents with hybrid retrieval, multi-model LLM reasoning, and automated document ingestion.
+> A production-oriented Retrieval-Augmented Generation (RAG) system capable of handling structured and unstructured documents with hybrid retrieval, multi-model LLM reasoning, automated document ingestion, and advanced retrieval optimization.
 
 ---
 
@@ -33,7 +33,7 @@ The chatbot is deployed and accessible here:
 
 **[https://genai-rag-system-docker-github.onrender.com](https://genai-rag-system-docker-github.onrender.com)**
 
-Deployed on **Render Cloud** using Docker containers. The chatbot interface is served independently from ingestion and indexing, which run via scheduled automation.
+Deployed on **Render Cloud** using Docker containers. The chatbot interface runs independently from document ingestion and indexing, which run through scheduled automation.
 
 ---
 
@@ -65,12 +65,14 @@ The architecture separates **document ingestion**, **vector indexing**, and **ch
 | Vision OCR | Gemini Vision extraction for scanned and chart-heavy PDFs |
 | Adaptive chunking | Format-aware chunking strategies per document type |
 | Semantic embeddings | HuggingFace embeddings (`BAAI/bge-small-en-v1.5`) |
-| Vector database | Persistent Qdrant Cloud integration |
+| Vector database | Qdrant Cloud persistent storage |
 | Hybrid retrieval | Dense embeddings + BM25 lexical retrieval |
 | Rank fusion | Reciprocal Rank Fusion (RRF) |
+| Query rewriting | LLM-powered query expansion for ambiguous queries |
+| Cross-encoder reranking | Semantic relevance reranking |
 | LLM routing | Dynamic multi-model selection |
-| Source attribution | Document provenance shown in UI |
-| Containerized deployment | Docker-based reproducible runtime environment |
+| Source attribution | Document provenance displayed in UI |
+| Containerized deployment | Docker reproducible environment |
 
 ---
 
@@ -96,8 +98,8 @@ The ingestion pipeline automatically detects when visual processing is required.
 Vision extraction is triggered when:
 
 - Pages contain charts or diagrams
-- Documents contain very little digital text
-- Pages are fully scanned
+- Documents contain minimal digital text
+- Pages are scanned images
 - Tables appear inside images
 
 ### Vision Extraction Workflow
@@ -161,28 +163,64 @@ Chunking strategy is dynamically selected based on the detected document format.
 
 ### Chart-Heavy PDFs
 
-- Entire page processed through Vision extraction
-- Prevents fragmentation of visual and diagrammatic content
+Entire pages are processed via **Gemini Vision extraction** to prevent fragmentation of diagrams and visual content.
 
 ### CSV Strategy
 
-- Stored directly in SQLite — no embeddings required for numeric queries
-- Vector embeddings used only when semantic interpretation is needed
+CSV files are stored directly in **SQLite** — no embeddings required for numeric queries. Vector embeddings are used only when semantic interpretation is needed.
 
 ---
 
 ## Retrieval & Ranking Architecture
 
-### Hybrid Retrieval Pipeline
+### Query Rewriting Layer
 
-Retrieval combines three signals fused via **Reciprocal Rank Fusion (RRF)**:
+Short or ambiguous queries reduce retrieval accuracy. To improve recall, the system introduces a **query rewriting stage** before hybrid retrieval.
+
+**Workflow:**
 
 ```
+User Query
+    ↓
+Initial semantic retrieval (preview)
+    ↓
+Relevant context chunks
+    ↓
+LLM Query Rewriting
+    ↓
+Improved semantic search query
+    ↓
+Hybrid retrieval pipeline
+```
+
+**Example rewrites:**
+
+| Original Query | Rewritten Query |
+|---|---|
+| certificate | no objection certificate for student at PES University |
+| olympic protest | Olympic Games protests and regulations |
+| sports coverage | T-20 World Cup 2014 sports coverage analysis |
+
+Benefits include improved recall, better semantic embeddings, and improved BM25 lexical matching.
+
+### Hybrid Retrieval Pipeline
+
+Retrieval combines multiple signals fused via **Reciprocal Rank Fusion (RRF)**:
+
+```
+Query Rewriting
+    ↓
 Dense Embedding Search
         +
   BM25 Lexical Retrieval
-        +
+    ↓
 Reciprocal Rank Fusion (RRF)
+    ↓
+Cross-Encoder Reranking
+    ↓
+File Diversity Filtering
+    ↓
+Final Context Selection
 ```
 
 This hybrid approach improves recall and ranking stability over dense-only search.
@@ -195,6 +233,25 @@ This hybrid approach improves recall and ranking stability over dense-only searc
 | Provider | HuggingFace Inference Router |
 | Vector Store | Qdrant Cloud |
 | Embeddings | Normalized |
+
+### Cross-Encoder Reranking
+
+A cross-encoder model evaluates relevance between the query and each retrieved chunk.
+
+**Model:**
+
+```
+cross-encoder/ms-marco-MiniLM-L-6-v2
+```
+
+The model scores each `(query, document_chunk)` pair and reorders chunks based on semantic relevance.
+
+**Example:**
+
+| Chunk | Score |
+|---|---|
+| Olympic protest rule text | 0.91 |
+| Random sports paragraph | 0.22 |
 
 ### Ranking Enhancements
 
@@ -210,11 +267,30 @@ Additional post-fusion ranking signals improve retrieval quality:
 | Vision chunk priority | Boosts OCR-extracted content |
 | Entity density scoring | Ranks information-dense chunks higher |
 
+### Candidate Expansion Strategy
+
+The system retrieves a larger candidate pool before final ranking to increase the probability of retrieving the correct chunk.
+
+```
+User requested results: 5
+Initial candidate pool: ~40
+Final reranked results: Top-K
+```
+
+### File Diversity Filtering
+
+To prevent a single document from dominating retrieval:
+
+```
+Maximum chunks per file: 2
+```
+
+This ensures balanced document coverage and prevents large PDFs from crowding out other sources.
+
 ### Context Selection
 
 - Global Top-K chunk selection with no per-file aggregation
 - Rank-aware selection with context size limits
-- Prevents single-document dominance
 - Ensures balanced, diverse context construction
 
 ### Source Attribution
@@ -231,7 +307,7 @@ The system dynamically selects the best LLM based on query type.
 |---|---|
 | `llama-3.3-70b-versatile` (Groq) | General QA |
 | GPT-4o Mini | Summarization |
-| Claude Haiku | Deep reasoning |
+| Claude Haiku | Complex reasoning |
 
 Router decisions are cached to reduce repeated routing overhead.
 
@@ -241,7 +317,7 @@ Router decisions are cached to reduce repeated routing overhead.
 
 ### Google Drive Sync
 
-Documents are ingested directly from a configured Google Drive folder. The pipeline detects new files, updated files, and previously indexed documents — enabling **incremental indexing** with no duplicate processing.
+Documents are ingested directly from a configured Google Drive folder. The pipeline detects new files, updated files, and previously indexed documents — enabling **incremental indexing with no duplicate processing**.
 
 ### Scheduled Ingestion
 
@@ -264,7 +340,7 @@ Each run performs:
 
 Two independent backup layers guarantee full index recoverability.
 
-**Metadata Backup**
+**Metadata Backup:**
 
 ```
 SQLite DB
@@ -276,7 +352,7 @@ Gzip compression
 Upload to Google Drive  →  sqlite_latest.pkl.gz
 ```
 
-**Vector Store Backup**
+**Vector Store Backup:**
 
 ```
 Qdrant Snapshot
@@ -356,7 +432,13 @@ Docker Container (Render)
 Streamlit Chatbot
       │
       ▼
+Query Rewriting
+      │
+      ▼
 Hybrid Retrieval (Dense + BM25 + RRF)
+      │
+      ▼
+Cross-Encoder Reranking
       │
       ▼
 LLM Router
@@ -382,6 +464,7 @@ Groq / GPT-4o Mini / Claude Haiku
 | Metadata Storage | SQLite |
 | Sparse Retrieval | BM25 |
 | Fusion Algorithm | Reciprocal Rank Fusion (RRF) |
+| Reranker | Cross-Encoder (`ms-marco-MiniLM-L-6-v2`) |
 | LLM Providers | Groq, OpenRouter |
 | Router Model | Groq |
 | Frontend | Streamlit |
@@ -456,6 +539,10 @@ The container exposes the Streamlit service on port `8501`.
 - [x] Structured PDF table extraction
 - [x] Deterministic CSV computation engine
 - [x] Hybrid semantic + BM25 retrieval with RRF
+- [x] Query rewriting layer
+- [x] Cross-encoder reranking
+- [x] Advanced ranking signals
+- [x] File diversity filtering
 - [x] Qdrant Cloud vector storage
 - [x] Google Drive ingestion synchronization
 - [x] SQLite metadata persistence
@@ -475,6 +562,8 @@ The container exposes the Streamlit service on port `8501`.
 - **No document-specific hardcoding** — retrieval is fully data-driven
 - **Deterministic structured reasoning** — numeric queries bypass LLM computation
 - **Hybrid retrieval** — improves recall and ranking stability over dense-only search
+- **Cross-encoder semantic reranking** — improves final chunk ordering
+- **Query rewriting** — improves recall for short or ambiguous queries
 - **Cloud-native** — hosted embeddings, remote vector store, and cloud backups
 - **Backup-safe** — full index recovery from Drive artifacts
 - **Modular design** — ingestion, retrieval, and serving are independently extensible
