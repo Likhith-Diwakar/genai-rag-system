@@ -24,18 +24,37 @@ QDRANT_BACKUP_FOLDER_ID = "1jFOnY3dsC7e8gnQg4Ntj7VEYk2mtDmRN"
 
 
 def delete_existing_file(service, folder_id, filename):
+    """
+    Delete existing backup file if it exists.
+    Safe for CI environments where service account
+    may not own the file.
+    """
+
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
 
-    results = service.files().list(
-        q=query,
-        fields="files(id, name)"
-    ).execute()
+    try:
+        results = service.files().list(
+            q=query,
+            fields="files(id, name)"
+        ).execute()
 
-    files = results.get("files", [])
+        files = results.get("files", [])
 
-    for file in files:
-        service.files().delete(fileId=file["id"]).execute()
-        print(f"Deleted old file: {file['name']}")
+        if not files:
+            return
+
+        for file in files:
+            try:
+                service.files().delete(fileId=file["id"]).execute()
+                print(f"Deleted old file: {file['name']}")
+            except Exception as delete_error:
+                print(
+                    f"Warning: could not delete file {file['name']} "
+                    f"(possibly owned by another account): {delete_error}"
+                )
+
+    except Exception as e:
+        print(f"Warning: failed to check existing backups: {e}")
 
 
 def upload_backup(file_path: str, backup_type: str):
@@ -55,8 +74,15 @@ def upload_backup(file_path: str, backup_type: str):
     else:
         raise ValueError("Invalid backup type. Use 'sqlite' or 'qdrant'.")
 
-    #  DELETE OLD FILE FIRST
+    # --------------------------------------------------
+    # DELETE OLD FILE FIRST
+    # --------------------------------------------------
+
     delete_existing_file(service, folder_id, filename)
+
+    # --------------------------------------------------
+    # PREPARE UPLOAD
+    # --------------------------------------------------
 
     file_metadata = {
         "name": filename,
@@ -72,11 +98,19 @@ def upload_backup(file_path: str, backup_type: str):
         resumable=True,
     )
 
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-    ).execute()
+    # --------------------------------------------------
+    # UPLOAD FILE
+    # --------------------------------------------------
 
-    print(f"Uploaded successfully: {filename}")
-    print(f"Drive File ID: {file.get('id')}")
+    try:
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+        ).execute()
+
+        print(f"Uploaded successfully: {filename}")
+        print(f"Drive File ID: {file.get('id')}")
+
+    except Exception as e:
+        raise RuntimeError(f"Backup upload failed: {e}")
