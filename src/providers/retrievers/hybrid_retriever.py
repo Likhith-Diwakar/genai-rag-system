@@ -1,12 +1,12 @@
-# src/providers/retrievers/hybrid_retriever.py
-
 import re
 from collections import defaultdict
 
+from src.utils.cross_encoder_reranker import CrossEncoderReranker
 from src.providers.embeddings.bge_embedder import BGEEmbedder
 from src.embedding.vector_store import VectorStore
 from src.providers.retrievers.bm25_retriever import BM25Retriever
 from src.utils.logger import logger
+from src.utils.query_rewriter import QueryRewriter
 
 
 class HybridRetriever:
@@ -16,6 +16,9 @@ class HybridRetriever:
         self.vector_store = VectorStore()
         self.bm25 = BM25Retriever()
         self.bm25.load()
+
+        self.query_rewriter = QueryRewriter()
+        self.reranker = CrossEncoderReranker()
 
     # ------------------------------------------------------------
     # Stable keyword scoring
@@ -229,7 +232,6 @@ class HybridRetriever:
             query_embedding = self.embedder.embed([query])[0]
 
         except Exception:
-
             logger.exception("Failed to embed query")
             return [], [], []
 
@@ -240,7 +242,6 @@ class HybridRetriever:
             collection_count = self.vector_store.count()
 
         except Exception:
-
             logger.warning("Could not fetch collection count. Defaulting candidate pool to k.")
             collection_count = k
 
@@ -255,7 +256,6 @@ class HybridRetriever:
             results = self.vector_store.query(query_embedding, safe_n)
 
         except Exception:
-
             logger.exception("Vector store query failed")
             return [], [], []
 
@@ -264,7 +264,6 @@ class HybridRetriever:
         distances = results.get("distances", [[]])[0]
 
         if not documents:
-
             logger.warning("No results returned from vector store")
             return [], [], []
 
@@ -297,34 +296,31 @@ class HybridRetriever:
 
         semantic_scored.sort(key=lambda x: x[2], reverse=True)
 
-        # ----------------------------------------------
-        # Deduplicate semantic results
-        # ----------------------------------------------
-
-        seen = set()
-        deduped_semantic = []
-
-        for doc, meta, score in semantic_scored:
-
-            file_id = meta.get("file_id")
-            chunk_id = meta.get("chunk_id")
-
-            key = f"{file_id}_{chunk_id}"
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-            deduped_semantic.append((doc, meta, score))
-
-        semantic_scored = deduped_semantic
-
         bm25_results = self.bm25.query(query, top_k=safe_n)
 
         docs, metas, scores = self._rrf_fusion(
             semantic_scored,
             bm25_results,
             top_k=k
+        )
+
+        # ------------------------------------------------------------
+        # Query rewrite using retrieved contexts (NO SECOND DB CALL)
+        # ------------------------------------------------------------
+        try:
+            rewritten_query = self.query_rewriter.rewrite(query, docs[:3])
+
+            if rewritten_query:
+                query = rewritten_query
+
+        except Exception:
+            logger.warning("Query rewriting failed; continuing with original query")
+
+        docs, metas, scores = self.reranker.rerank(
+            query,
+            docs,
+            metas,
+            scores
         )
 
         docs, metas, scores = self._apply_file_diversity(

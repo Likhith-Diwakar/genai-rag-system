@@ -254,6 +254,7 @@ def extract_pdf_text(path: str) -> str:
             logger.info(f"Page {page_number} contains {len(page.images)} raster images")
 
             combined_output.append(f"\n\n===== PAGE {page_number} =====\n")
+            combined_output.append(f"PAGE_NUMBER : {page_number}")
 
             text = page.extract_text()
 

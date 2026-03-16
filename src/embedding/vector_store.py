@@ -78,10 +78,21 @@ class VectorStore:
         points = []
 
         for i in range(len(documents)):
+
             payload = metadatas[i].copy()
+
+            # --------------------------------------------------
+            # Ensure page_number is stored safely if present
+            # --------------------------------------------------
+            if "page_number" in payload:
+                try:
+                    payload["page_number"] = int(payload["page_number"])
+                except Exception:
+                    payload["page_number"] = None
+
             payload["document"] = documents[i]
 
-            #  Convert string ID → deterministic UUID
+            # Convert deterministic UUID from string ID
             generated_id = str(
                 uuid.uuid5(uuid.NAMESPACE_DNS, str(ids[i]))
             )
@@ -122,11 +133,13 @@ class VectorStore:
     # COUNT
     # ------------------------------------------------------
     def count(self) -> int:
+
         count = self.client.count(
             collection_name=COLLECTION_NAME
         ).count
 
         logger.info(f"Total vectors in Qdrant: {count}")
+
         return count
 
     # ------------------------------------------------------
@@ -146,9 +159,12 @@ class VectorStore:
         distances = []
 
         for hit in results.points:
+
             payload = hit.payload or {}
 
             documents.append(payload.get("document"))
+
+            # Remove document field from metadata
             metadatas.append(
                 {k: v for k, v in payload.items() if k != "document"}
             )

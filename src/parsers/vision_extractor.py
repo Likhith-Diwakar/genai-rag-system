@@ -1,7 +1,9 @@
 import os
+import io
 from PIL import Image
 from dotenv import load_dotenv
 from src.utils.logger import logger
+
 from google import genai
 from google.genai.types import GenerateContentConfig
 
@@ -92,6 +94,15 @@ def _optimize_image(pil_image: Image.Image) -> Image.Image:
 
 
 # --------------------------------------------------
+# Convert PIL image to bytes for Gemini
+# --------------------------------------------------
+def _image_to_bytes(pil_image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    pil_image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+# --------------------------------------------------
 # Vision extraction
 # --------------------------------------------------
 def run_vision_extraction(pil_image: Image.Image) -> str:
@@ -109,13 +120,19 @@ def run_vision_extraction(pil_image: Image.Image) -> str:
 
         optimized_image = _optimize_image(pil_image)
 
+        image_bytes = _image_to_bytes(optimized_image)
+
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=[STRUCTURED_PROMPT, optimized_image],
+            contents=[
+                {
+                    "mime_type": "image/png",
+                    "data": image_bytes
+                },
+                STRUCTURED_PROMPT
+            ],
             config=GenerateContentConfig(
-                temperature=0,   # deterministic output
-                # top_p intentionally omitted — top_p=0.0 can cause API errors
-                # temperature=0 already ensures determinism
+                temperature=0
             ),
         )
 
@@ -126,18 +143,21 @@ def run_vision_extraction(pil_image: Image.Image) -> str:
         text_output = getattr(response, "text", None)
 
         if not text_output:
-            # Log full response for debugging when text is empty
             logger.warning(f"Gemini returned empty text. Full response: {response}")
             return ""
 
         cleaned = text_output.strip()
 
-        # Safety: prevent useless hallucinated filler
         if len(cleaned) < 5:
-            logger.warning(f"Gemini output too short (len={len(cleaned)}), discarding.")
+            logger.warning(
+                f"Gemini output too short (len={len(cleaned)}), discarding."
+            )
             return ""
 
-        logger.info(f"Gemini extraction successful. Output length: {len(cleaned)} chars")
+        logger.info(
+            f"Gemini extraction successful. Output length: {len(cleaned)} chars"
+        )
+
         return cleaned
 
     except Exception as e:

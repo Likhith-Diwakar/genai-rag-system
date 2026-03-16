@@ -42,7 +42,7 @@ st.caption("Ask questions over your Google Drive documents")
 
 
 # ----------------------------------------------------------
-# INTRO SECTION (MENTOR FEEDBACK IMPLEMENTATION)
+# INTRO SECTION
 # ----------------------------------------------------------
 
 st.write(
@@ -121,19 +121,16 @@ with st.expander("Example questions you can ask"):
 
 
 # ----------------------------------------------------------
-# STARTUP CHECKS (RUN ONLY ONCE PER SESSION)
+# STARTUP CHECKS
 # ----------------------------------------------------------
 
 if "startup_completed" not in st.session_state:
 
     try:
 
-        # Restore SQLite if missing (Render restart safety)
         restore_sqlite_if_missing()
 
-        # Connect to Vector Store (Qdrant)
         vector_store = VectorStore()
-
         total_vectors = vector_store.count()
 
         logger.info(f"Vector store connected | total_vectors={total_vectors}")
@@ -151,7 +148,6 @@ if "startup_completed" not in st.session_state:
     except Exception as e:
 
         logger.error(f"Startup initialization failed: {e}")
-
         st.error("Failed to initialize system.")
 
     st.session_state.startup_completed = True
@@ -187,16 +183,23 @@ for msg in st.session_state.messages:
 
                     file_id = s.get("file_id")
                     file_name = s.get("file_name")
+                    page_number = s.get("page_number")
 
                     if file_id:
 
                         url = f"https://drive.google.com/file/d/{file_id}/view"
 
-                        st.markdown(f"- 🔗 [{file_name}]({url})")
+                        if page_number:
+                            st.markdown(f"- 🔗 [{file_name} — Page {page_number}]({url})")
+                        else:
+                            st.markdown(f"- 🔗 [{file_name}]({url})")
 
                     else:
 
-                        st.markdown(f"- {file_name}")
+                        if page_number:
+                            st.markdown(f"- {file_name} — Page {page_number}")
+                        else:
+                            st.markdown(f"- {file_name}")
 
 
 # ----------------------------------------------------------
@@ -222,7 +225,6 @@ if query:
 
                 answer, sources = generate_answer(query)
 
-                # Convert old fallback message to new one
                 if answer.strip() == "I do not know based on the provided documents.":
                     answer = NO_CONTEXT_MESSAGE
                     sources = []
@@ -247,16 +249,23 @@ if query:
 
                         file_id = s.get("file_id")
                         file_name = s.get("file_name")
+                        page_number = s.get("page_number")
 
                         if file_id:
 
                             url = f"https://drive.google.com/file/d/{file_id}/view"
 
-                            st.markdown(f"- 🔗 [{file_name}]({url})")
+                            if page_number:
+                                st.markdown(f"- 🔗 [{file_name} — Page {page_number}]({url})")
+                            else:
+                                st.markdown(f"- 🔗 [{file_name}]({url})")
 
                         else:
 
-                            st.markdown(f"- {file_name}")
+                            if page_number:
+                                st.markdown(f"- {file_name} — Page {page_number}")
+                            else:
+                                st.markdown(f"- {file_name}")
 
     st.session_state.messages.append(
         {

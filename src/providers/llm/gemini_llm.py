@@ -1,7 +1,8 @@
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
-
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 from src.interfaces.base_llm import BaseLLM
 from src.utils.logger import logger
 
