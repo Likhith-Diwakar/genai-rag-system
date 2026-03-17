@@ -9,28 +9,32 @@ jobs:
   run-sync:
     runs-on: ubuntu-latest
 
-    env:
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-      QDRANT_URL: ${{ secrets.QDRANT_URL }}
-      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
-
     steps:
+      # --------------------------------------------------
+      # CHECKOUT
+      # --------------------------------------------------
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # PYTHON SETUP
+      # --------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # Install system dependency for PDF → image conversion
+      # --------------------------------------------------
+      # SYSTEM DEPENDENCIES
+      # --------------------------------------------------
       - name: Install poppler (required for pdf2image)
         run: |
           sudo apt-get update
           sudo apt-get install -y poppler-utils
 
+      # --------------------------------------------------
+      # INSTALL DEPENDENCIES
+      # --------------------------------------------------
       - name: Upgrade pip
         run: |
           python -m pip install --upgrade pip
@@ -39,6 +43,29 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      # --------------------------------------------------
+      # GOOGLE SERVICE ACCOUNT SETUP
+      # --------------------------------------------------
+      - name: Setup Google Credentials
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=credentials.json" >> $GITHUB_ENV
+
+      # --------------------------------------------------
+      # ENV VARIABLES (CRITICAL FIX)
+      # --------------------------------------------------
+      - name: Set environment variables
+        run: |
+          echo "QDRANT_URL=${{ secrets.QDRANT_URL }}" >> $GITHUB_ENV
+          echo "QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }}" >> $GITHUB_ENV
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
+          echo "HF_API_TOKEN=${{ secrets.HF_API_TOKEN }}" >> $GITHUB_ENV
+          echo "SQLITE_FOLDER_ID=${{ secrets.SQLITE_FOLDER_ID }}" >> $GITHUB_ENV
+          echo "QDRANT_FOLDER_ID=${{ secrets.QDRANT_FOLDER_ID }}" >> $GITHUB_ENV
+
+      # --------------------------------------------------
+      # RUN PIPELINE
+      # --------------------------------------------------
       - name: Run Daily Pipeline
         run: |
-          python scripts/run_daily_sync.py
+          python -u scripts/run_daily_sync.py
