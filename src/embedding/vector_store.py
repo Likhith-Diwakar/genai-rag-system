@@ -43,6 +43,7 @@ def _initialize():
                 _client = QdrantClient(
                     url=QDRANT_URL.strip(),
                     api_key=QDRANT_API_KEY.strip(),
+                    timeout=60,  # increased timeout to avoid connection timeout
                 )
 
                 # Create collection if not exists
@@ -81,7 +82,7 @@ class VectorStore:
             payload = metadatas[i].copy()
             payload["document"] = documents[i]
 
-            #  Convert string ID → deterministic UUID
+            # Convert string ID → deterministic UUID
             generated_id = str(
                 uuid.uuid5(uuid.NAMESPACE_DNS, str(ids[i]))
             )
@@ -153,7 +154,6 @@ class VectorStore:
                 {k: v for k, v in payload.items() if k != "document"}
             )
 
-            # Convert similarity to distance-like value
             distances.append(1 - hit.score)
 
         return {
