@@ -2,7 +2,7 @@ name: Daily RAG Pipeline
 
 on:
   schedule:
-    - cron: "0 21 * * *"   # 3 AM IST
+    - cron: "0 21 * * *"   # 3 AM IST timezone: 
   workflow_dispatch:
 
 jobs:
