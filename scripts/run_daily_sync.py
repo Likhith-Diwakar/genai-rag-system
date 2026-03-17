@@ -1,11 +1,10 @@
 import os
 import sys
-import mimetypes
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from datetime import datetime
+import pytz
 
 # --------------------------------------------------
-# FIX PYTHON PATH
+# FIX PROJECT ROOT PATH
 # --------------------------------------------------
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,85 +14,77 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # --------------------------------------------------
-
-from src.utils.auth import get_credentials
-
-# --------------------------------------------------
-# ENV (NO HARDCODING)
+# IMPORT BUSINESS LOGIC
 # --------------------------------------------------
 
-SQLITE_BACKUP_FOLDER_ID = os.getenv("SQLITE_BACKUP_FOLDER_ID")
-QDRANT_BACKUP_FOLDER_ID = os.getenv("QDRANT_BACKUP_FOLDER_ID")
+from src.ingestion.main import run_sync
+from scripts.backup_sqlite import backup_sqlite
+from scripts.backup_qdrant import backup_qdrant
+from scripts.upload_backup_to_drive import upload_backup
+
+TIMEZONE = "Asia/Kolkata"
+
+# --------------------------------------------------
+# LOGGING
+# --------------------------------------------------
+
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+LOG_FILE = os.path.join(LOG_DIR, "daily_sync.log")
+
+
+def log(message):
+    timestamp = datetime.now(pytz.timezone(TIMEZONE))
+    full_message = f"[{timestamp}] {message}"
+    print(full_message, flush=True)
+
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(full_message + "\n")
 
 
 # --------------------------------------------------
-# DELETE EXISTING FILE
+# MAIN PIPELINE
 # --------------------------------------------------
 
-def delete_existing_file(service, folder_id, filename):
-    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+def run_daily_sync():
 
-    results = service.files().list(
-        q=query,
-        fields="files(id, name)"
-    ).execute()
+    log("========================================")
+    log("Daily Pipeline Started")
+    log("========================================")
 
-    files = results.get("files", [])
+    # STEP 1: DRIVE SYNC
+    try:
+        log("Starting Drive Sync...")
+        run_sync(verbose=True)
+        log("Drive Sync completed.")
+    except Exception as e:
+        log(f"Drive Sync failed: {e}")
+        log("Pipeline stopped.")
+        return
 
-    for file in files:
-        service.files().delete(fileId=file["id"]).execute()
-        print(f"Deleted old file: {file['name']}")
+    # STEP 2: SQLITE BACKUP
+    try:
+        log("Starting SQLite Backup...")
+        sqlite_path = backup_sqlite()
+        upload_backup(sqlite_path, "sqlite")
+        log("SQLite Backup completed.")
+    except Exception as e:
+        log(f"SQLite Backup failed: {e}")
+
+    # STEP 3: QDRANT BACKUP
+    try:
+        log("Starting Qdrant Backup...")
+        qdrant_path = backup_qdrant()
+        upload_backup(qdrant_path, "qdrant")
+        log("Qdrant Backup completed.")
+    except Exception as e:
+        log(f"Qdrant Backup failed: {e}")
+
+    log("========================================")
+    log("Daily Pipeline Finished")
+    log("========================================")
 
 
-# --------------------------------------------------
-# UPLOAD BACKUP
-# --------------------------------------------------
-
-def upload_backup(file_path: str, backup_type: str):
-
-    if not os.path.exists(file_path):
-        raise FileNotFoundError("Backup file not found.")
-
-    creds = get_credentials()
-    service = build("drive", "v3", credentials=creds)
-
-    filename = os.path.basename(file_path)
-
-    # SELECT FOLDER
-    if backup_type == "sqlite":
-        folder_id = SQLITE_BACKUP_FOLDER_ID
-    elif backup_type == "qdrant":
-        folder_id = QDRANT_BACKUP_FOLDER_ID
-    else:
-        raise ValueError("Invalid backup type. Use 'sqlite' or 'qdrant'.")
-
-    if not folder_id:
-        raise ValueError("Backup folder ID not set in environment variables")
-
-    # DELETE OLD FILE
-    delete_existing_file(service, folder_id, filename)
-
-    # PREPARE UPLOAD
-    file_metadata = {
-        "name": filename,
-        "parents": [folder_id],
-    }
-
-    mime_type, _ = mimetypes.guess_type(file_path)
-    mime_type = mime_type or "application/octet-stream"
-
-    media = MediaFileUpload(
-        file_path,
-        mimetype=mime_type,
-        resumable=True,
-    )
-
-    # UPLOAD NEW FILE
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-    ).execute()
-
-    print(f"Uploaded successfully: {filename}")
-    print(f"Drive File ID: {file.get('id')}")
+if __name__ == "__main__":
+    run_daily_sync()
