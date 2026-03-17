@@ -27,12 +27,13 @@ def get_credentials():
     Cloud-safe + Local-safe credential loader.
 
     Priority:
-    1️⃣ If GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_CREDENTIALS_JSON exists → use Service Account
-    2️⃣ Else → fallback to OAuth InstalledAppFlow (Local)
+    1️⃣ If GOOGLE_SERVICE_ACCOUNT_JSON exists → use Service Account (env)
+    2️⃣ If credentials.json exists (CI) → use Service Account (file)
+    3️⃣ Else → fallback to OAuth InstalledAppFlow (Local)
     """
 
     # ==================================================
-    # 1️⃣ CLOUD MODE (Render / GitHub Actions)
+    # 1️⃣ SERVICE ACCOUNT VIA ENV (CI preferred)
     # ==================================================
 
     credentials_json = (
@@ -54,11 +55,30 @@ def get_credentials():
             )
 
         except Exception as e:
-            logger.error(f"Failed loading service account credentials: {e}")
+            logger.error(f"Failed loading service account credentials from env: {e}")
             raise
 
     # ==================================================
-    # 2️⃣ LOCAL MODE (OAuth flow)
+    # 2️⃣ SERVICE ACCOUNT VIA FILE (GitHub Actions fallback)
+    # ==================================================
+
+    if os.path.exists(CREDS_FILE):
+        try:
+            logger.info(
+                "Loading Google credentials from credentials.json (Service Account mode)"
+            )
+
+            return service_account.Credentials.from_service_account_file(
+                CREDS_FILE,
+                scopes=SCOPES,
+            )
+
+        except Exception as e:
+            logger.error(f"Failed loading service account credentials from file: {e}")
+            raise
+
+    # ==================================================
+    # 3️⃣ LOCAL MODE (OAuth flow)
     # ==================================================
 
     logger.info("Using local OAuth flow for Google authentication")
