@@ -52,10 +52,11 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=credentials.json" >> $GITHUB_ENV
 
       # --------------------------------------------------
-      # ENV VARIABLES (CRITICAL FIX)
+      # ENV VARIABLES (FINAL FIX)
       # --------------------------------------------------
       - name: Set environment variables
         run: |
+          echo "USE_SERVICE_ACCOUNT=true" >> $GITHUB_ENV
           echo "QDRANT_URL=${{ secrets.QDRANT_URL }}" >> $GITHUB_ENV
           echo "QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }}" >> $GITHUB_ENV
           echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
