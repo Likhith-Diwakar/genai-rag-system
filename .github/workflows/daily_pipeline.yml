@@ -2,7 +2,7 @@ name: Daily RAG Pipeline
 
 on:
   schedule:
-    - cron: "30 21 * * *"   # 3:00 AM IST (IST = UTC+5:30)
+    - cron: "30 21 * * *"   # 3:00 AM IST (UTC+5:30)
   workflow_dispatch:
 
 jobs:
@@ -44,25 +44,23 @@ jobs:
           pip install -r requirements.txt
 
       # --------------------------------------------------
-      # GOOGLE SERVICE ACCOUNT SETUP
-      # --------------------------------------------------
-      - name: Setup Google Credentials
-        run: |
-          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > credentials.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/credentials.json" >> $GITHUB_ENV
-
-      # --------------------------------------------------
       # ENV VARIABLES
       # --------------------------------------------------
       - name: Set environment variables
         run: |
-          echo "USE_SERVICE_ACCOUNT=true" >> $GITHUB_ENV
           echo "QDRANT_URL=${{ secrets.QDRANT_URL }}" >> $GITHUB_ENV
           echo "QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }}" >> $GITHUB_ENV
           echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
           echo "HF_API_TOKEN=${{ secrets.HF_API_TOKEN }}" >> $GITHUB_ENV
           echo "SQLITE_FOLDER_ID=${{ secrets.SQLITE_FOLDER_ID }}" >> $GITHUB_ENV
           echo "QDRANT_FOLDER_ID=${{ secrets.QDRANT_FOLDER_ID }}" >> $GITHUB_ENV
+
+      # --------------------------------------------------
+      # SETUP OAUTH TOKEN (REPLACES SERVICE ACCOUNT)
+      # --------------------------------------------------
+      - name: Setup OAuth Token
+        run: |
+          echo "${{ secrets.GOOGLE_DRIVE_TOKEN }}" | base64 --decode > token.json
 
       # --------------------------------------------------
       # RUN PIPELINE
