@@ -123,7 +123,7 @@ def run_vision_extraction(pil_image: Image.Image) -> str:
         image_bytes = _image_to_bytes(optimized_image)
 
         image_part = Part.from_bytes(data=image_bytes, mime_type="image/png")
-        text_part = Part.from_text(STRUCTURED_PROMPT)
+        text_part = Part.from_text(text=STRUCTURED_PROMPT)
 
         response = client.models.generate_content(
             model=MODEL_NAME,
