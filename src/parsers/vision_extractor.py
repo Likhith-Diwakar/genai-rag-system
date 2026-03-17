@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from src.utils.logger import logger
 
 from google import genai
-from google.genai.types import GenerateContentConfig
+from google.genai.types import GenerateContentConfig, Part
 
 
 # --------------------------------------------------
@@ -122,15 +122,12 @@ def run_vision_extraction(pil_image: Image.Image) -> str:
 
         image_bytes = _image_to_bytes(optimized_image)
 
+        image_part = Part.from_bytes(data=image_bytes, mime_type="image/png")
+        text_part = Part.from_text(STRUCTURED_PROMPT)
+
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=[
-                {
-                    "mime_type": "image/png",
-                    "data": image_bytes
-                },
-                STRUCTURED_PROMPT
-            ],
+            contents=[image_part, text_part],
             config=GenerateContentConfig(
                 temperature=0
             ),
