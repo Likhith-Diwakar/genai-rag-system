@@ -18,10 +18,17 @@ if PROJECT_ROOT not in sys.path:
 
 from src.utils.auth import get_credentials
 
-# 🔹 FOLDER IDS
-SQLITE_BACKUP_FOLDER_ID = "1RZjb6ok7ub7lG_gYI5fecAkHAmIejSCm"
-QDRANT_BACKUP_FOLDER_ID = "1jFOnY3dsC7e8gnQg4Ntj7VEYk2mtDmRN"
+# --------------------------------------------------
+# ENV (NO HARDCODING)
+# --------------------------------------------------
 
+SQLITE_BACKUP_FOLDER_ID = os.getenv("SQLITE_BACKUP_FOLDER_ID")
+QDRANT_BACKUP_FOLDER_ID = os.getenv("QDRANT_BACKUP_FOLDER_ID")
+
+
+# --------------------------------------------------
+# DELETE EXISTING FILE
+# --------------------------------------------------
 
 def delete_existing_file(service, folder_id, filename):
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
@@ -35,8 +42,12 @@ def delete_existing_file(service, folder_id, filename):
 
     for file in files:
         service.files().delete(fileId=file["id"]).execute()
-        print(f"Deleted old file: {file['name']}")
+        print(f"Deleted old file: {file['name']}", flush=True)
 
+
+# --------------------------------------------------
+# UPLOAD BACKUP
+# --------------------------------------------------
 
 def upload_backup(file_path: str, backup_type: str):
 
@@ -48,6 +59,7 @@ def upload_backup(file_path: str, backup_type: str):
 
     filename = os.path.basename(file_path)
 
+    # SELECT FOLDER
     if backup_type == "sqlite":
         folder_id = SQLITE_BACKUP_FOLDER_ID
     elif backup_type == "qdrant":
@@ -55,9 +67,15 @@ def upload_backup(file_path: str, backup_type: str):
     else:
         raise ValueError("Invalid backup type. Use 'sqlite' or 'qdrant'.")
 
-    #  DELETE OLD FILE FIRST
+    if not folder_id:
+        raise ValueError("Backup folder ID not set in environment variables")
+
+    print(f"Uploading {filename} to folder {folder_id}", flush=True)
+
+    # DELETE OLD FILE
     delete_existing_file(service, folder_id, filename)
 
+    # PREPARE UPLOAD
     file_metadata = {
         "name": filename,
         "parents": [folder_id],
@@ -72,11 +90,12 @@ def upload_backup(file_path: str, backup_type: str):
         resumable=True,
     )
 
+    # UPLOAD NEW FILE
     file = service.files().create(
         body=file_metadata,
         media_body=media,
         fields="id",
     ).execute()
 
-    print(f"Uploaded successfully: {filename}")
-    print(f"Drive File ID: {file.get('id')}")
+    print(f"Uploaded successfully: {filename}", flush=True)
+    print(f"Drive File ID: {file.get('id')}", flush=True)
