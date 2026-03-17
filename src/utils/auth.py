@@ -27,12 +27,12 @@ def get_credentials():
     Cloud-safe + Local-safe credential loader.
 
     Priority:
-    1️⃣ If GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_CREDENTIALS_JSON exists → use Service Account
-    2️⃣ Else → fallback to OAuth InstalledAppFlow (Local)
+    1️⃣ Service Account (with optional impersonation)
+    2️⃣ OAuth (local fallback)
     """
 
     # ==================================================
-    # 1️⃣ CLOUD MODE (Render / GitHub Actions)
+    # 1️⃣ CLOUD MODE (Service Account)
     # ==================================================
 
     credentials_json = (
@@ -48,10 +48,23 @@ def get_credentials():
 
             credentials_info = json.loads(credentials_json)
 
-            return service_account.Credentials.from_service_account_info(
+            credentials = service_account.Credentials.from_service_account_info(
                 credentials_info,
                 scopes=SCOPES,
             )
+
+            # --------------------------------------------------
+            # OPTIONAL: IMPERSONATION (FIXES STORAGE QUOTA ISSUE)
+            # --------------------------------------------------
+
+            impersonate_email = os.getenv("GOOGLE_IMPERSONATE_EMAIL")
+
+            if impersonate_email:
+                logger.info(f"Using domain-wide delegation as {impersonate_email}")
+
+                credentials = credentials.with_subject(impersonate_email)
+
+            return credentials
 
         except Exception as e:
             logger.error(f"Failed loading service account credentials: {e}")
