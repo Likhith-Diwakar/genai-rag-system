@@ -2,7 +2,7 @@ name: Daily RAG Pipeline
 
 on:
   schedule:
-    - cron: "0 21 * * *"   # 3 AM IST
+    - cron: "30 21 * * *"   # 3:00 AM IST (IST = UTC+5:30)
   workflow_dispatch:
 
 jobs:
@@ -49,10 +49,10 @@ jobs:
       - name: Setup Google Credentials
         run: |
           echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > credentials.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=credentials.json" >> $GITHUB_ENV
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/credentials.json" >> $GITHUB_ENV
 
       # --------------------------------------------------
-      # ENV VARIABLES (FINAL FIX)
+      # ENV VARIABLES
       # --------------------------------------------------
       - name: Set environment variables
         run: |
