@@ -50,4 +50,4 @@ jobs:
 
       - name: Run Daily Pipeline
         run: |
-          python scripts/run_daily_sync.py
+          python -u scripts/run_daily_sync.py
