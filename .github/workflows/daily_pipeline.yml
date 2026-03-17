@@ -2,21 +2,12 @@ name: Daily RAG Pipeline
 
 on:
   schedule:
-    - cron: "0 21 * * *"   # 3 AM IST timezone: 
+    - cron: "0 21 * * *"   # 3 AM IST
   workflow_dispatch:
 
 jobs:
   run-sync:
     runs-on: ubuntu-latest
-
-    env:
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-      QDRANT_URL: ${{ secrets.QDRANT_URL }}
-      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
-      SQLITE_BACKUP_FOLDER_ID: ${{ secrets.SQLITE_BACKUP_FOLDER_ID }}
-      QDRANT_BACKUP_FOLDER_ID: ${{ secrets.QDRANT_BACKUP_FOLDER_ID }}
 
     steps:
       - name: Checkout repo
@@ -27,7 +18,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install poppler (required for pdf2image)
+      - name: Install poppler
         run: |
           sudo apt-get update
           sudo apt-get install -y poppler-utils
@@ -40,6 +31,26 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install --upgrade --force-reinstall google-genai
+
+      # --------------------------------------------------
+      #  FIX 1: SETUP SERVICE ACCOUNT
+      # --------------------------------------------------
+      - name: Setup Google Credentials
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > credentials.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=credentials.json" >> $GITHUB_ENV
+
+      # --------------------------------------------------
+      #  FIX 2: CORRECT ENV VARIABLES
+      # --------------------------------------------------
+      - name: Set environment variables
+        run: |
+          echo "QDRANT_URL=${{ secrets.QDRANT_URL }}" >> $GITHUB_ENV
+          echo "QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }}" >> $GITHUB_ENV
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
+          echo "HF_API_TOKEN=${{ secrets.HF_API_TOKEN }}" >> $GITHUB_ENV
+          echo "SQLITE_FOLDER_ID=${{ secrets.SQLITE_FOLDER_ID }}" >> $GITHUB_ENV
+          echo "QDRANT_FOLDER_ID=${{ secrets.QDRANT_FOLDER_ID }}" >> $GITHUB_ENV
 
       - name: Verify Gemini SDK
         run: |
