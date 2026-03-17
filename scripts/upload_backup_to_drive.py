@@ -27,22 +27,32 @@ QDRANT_BACKUP_FOLDER_ID = os.getenv("QDRANT_BACKUP_FOLDER_ID")
 
 
 # --------------------------------------------------
-# DELETE EXISTING FILE
+# DELETE EXISTING FILE (SAFE VERSION)
 # --------------------------------------------------
 
 def delete_existing_file(service, folder_id, filename):
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
 
-    results = service.files().list(
-        q=query,
-        fields="files(id, name)"
-    ).execute()
+    try:
+        results = service.files().list(
+            q=query,
+            fields="files(id, name)"
+        ).execute()
 
-    files = results.get("files", [])
+        files = results.get("files", [])
 
-    for file in files:
-        service.files().delete(fileId=file["id"]).execute()
-        print(f"Deleted old file: {file['name']}", flush=True)
+        for file in files:
+            try:
+                service.files().delete(fileId=file["id"]).execute()
+                print(f"Deleted old file: {file['name']}", flush=True)
+            except Exception as e:
+                print(
+                    f"Skipping delete (no permission) for {file['name']}: {e}",
+                    flush=True
+                )
+
+    except Exception as e:
+        print(f"Error while checking existing files: {e}", flush=True)
 
 
 # --------------------------------------------------
@@ -72,7 +82,7 @@ def upload_backup(file_path: str, backup_type: str):
 
     print(f"Uploading {filename} to folder {folder_id}", flush=True)
 
-    # DELETE OLD FILE
+    # DELETE OLD FILE (NON-BLOCKING)
     delete_existing_file(service, folder_id, filename)
 
     # PREPARE UPLOAD
@@ -91,11 +101,15 @@ def upload_backup(file_path: str, backup_type: str):
     )
 
     # UPLOAD NEW FILE
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-    ).execute()
+    try:
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+        ).execute()
 
-    print(f"Uploaded successfully: {filename}", flush=True)
-    print(f"Drive File ID: {file.get('id')}", flush=True)
+        print(f"Uploaded successfully: {filename}", flush=True)
+        print(f"Drive File ID: {file.get('id')}", flush=True)
+
+    except Exception as e:
+        raise RuntimeError(f"Backup upload failed: {e}")
