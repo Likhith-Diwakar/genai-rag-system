@@ -54,11 +54,13 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       # --------------------------------------------------
-      # OAUTH TOKEN (FIX)
+      # OAUTH TOKEN (MULTILINE SAFE FIX)
       # --------------------------------------------------
       - name: Export OAuth Token
         run: |
-          echo "GOOGLE_DRIVE_TOKEN=${{ secrets.GOOGLE_DRIVE_TOKEN }}" >> $GITHUB_ENV
+          echo "GOOGLE_DRIVE_TOKEN<<EOF" >> $GITHUB_ENV
+          echo '${{ secrets.GOOGLE_DRIVE_TOKEN }}' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Verify Gemini SDK
         run: |
