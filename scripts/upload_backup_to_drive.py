@@ -53,7 +53,8 @@ def upload_backup(file_path: str, backup_type: str):
     if not os.path.exists(file_path):
         raise FileNotFoundError("Backup file not found.")
 
-    creds = get_credentials()
+    # IMPORTANT: Use OAuth (not service account)
+    creds = get_credentials(force_oauth=True)
     service = build("drive", "v3", credentials=creds)
 
     filename = os.path.basename(file_path)
