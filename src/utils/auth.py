@@ -1,7 +1,6 @@
-# src/utils/auth.py
-
 import os
 import json
+import base64
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -22,91 +21,162 @@ TOKEN_FILE = "token.json"
 CREDS_FILE = "credentials.json"
 
 
-def get_credentials():
+# --------------------------------------------------
+# SERVICE ACCOUNT (CI)
+# --------------------------------------------------
+
+def _load_service_account():
     """
-    Cloud-safe + Local-safe credential loader.
-
-    Priority:
-    1️⃣ If GOOGLE_SERVICE_ACCOUNT_JSON exists → use Service Account (env)
-    2️⃣ If credentials.json exists (CI) → use Service Account (file)
-    3️⃣ Else → fallback to OAuth InstalledAppFlow (Local)
+    Load service account credentials from environment (GitHub Actions).
     """
+    sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
-    # ==================================================
-    # 1️⃣ SERVICE ACCOUNT VIA ENV (CI preferred)
-    # ==================================================
+    if not sa_json:
+        return None
 
-    credentials_json = (
-        os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-        or os.getenv("GOOGLE_CREDENTIALS_JSON")
-    )
+    try:
+        logger.info("Using Service Account authentication (CI mode)")
 
-    if credentials_json:
-        try:
-            logger.info(
-                "Loading Google credentials from environment variable (Service Account mode)"
-            )
+        creds_dict = json.loads(sa_json)
 
-            credentials_info = json.loads(credentials_json)
+        return service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=SCOPES
+        )
 
-            return service_account.Credentials.from_service_account_info(
-                credentials_info,
-                scopes=SCOPES,
-            )
+    except Exception as e:
+        logger.error(f"Failed to load service account: {e}")
+        return None
 
-        except Exception as e:
-            logger.error(f"Failed loading service account credentials from env: {e}")
-            raise
 
-    # ==================================================
-    # 2️⃣ SERVICE ACCOUNT VIA FILE (GitHub Actions fallback)
-    # ==================================================
+# --------------------------------------------------
+# OAUTH FROM ENV (CI fallback)
+# --------------------------------------------------
 
-    if os.path.exists(CREDS_FILE):
-        try:
-            logger.info(
-                "Loading Google credentials from credentials.json (Service Account mode)"
-            )
+def _load_token_from_env():
+    """
+    Load OAuth token from base64-encoded GitHub secret.
+    """
+    token_base64 = os.getenv("GOOGLE_DRIVE_TOKEN")
 
-            return service_account.Credentials.from_service_account_file(
-                CREDS_FILE,
-                scopes=SCOPES,
-            )
+    if not token_base64:
+        return None
 
-        except Exception as e:
-            logger.error(f"Failed loading service account credentials from file: {e}")
-            raise
+    try:
+        logger.info("Loading OAuth token from environment")
 
-    # ==================================================
-    # 3️⃣ LOCAL MODE (OAuth flow)
-    # ==================================================
+        decoded = base64.b64decode(token_base64).decode("utf-8")
+        token_data = json.loads(decoded)
 
-    logger.info("Using local OAuth flow for Google authentication")
+        return Credentials.from_authorized_user_info(token_data, SCOPES)
 
-    creds = None
+    except Exception as e:
+        logger.error(f"Failed to load token from environment: {e}")
+        return None
 
-    # Load existing token
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
-    # If credentials invalid or expired
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists(CREDS_FILE):
-                raise FileNotFoundError(
-                    "credentials.json not found for local OAuth flow."
-                )
+# --------------------------------------------------
+# OAUTH FROM LOCAL FILE
+# --------------------------------------------------
 
-            flow = InstalledAppFlow.from_client_secrets_file(
-                CREDS_FILE,
-                SCOPES,
-            )
-            creds = flow.run_local_server(port=0)
+def _load_token_from_file():
+    """
+    Load OAuth token from local file.
+    """
+    if not os.path.exists(TOKEN_FILE):
+        return None
 
-        # Save token locally
+    try:
+        logger.info("Loading OAuth token from local file")
+
+        return Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+
+    except Exception as e:
+        logger.error(f"Failed to load token from file: {e}")
+        return None
+
+
+# --------------------------------------------------
+# SAVE TOKEN (LOCAL)
+# --------------------------------------------------
+
+def _save_token(creds):
+    """
+    Save OAuth token locally.
+    """
+    try:
         with open(TOKEN_FILE, "w") as token:
             token.write(creds.to_json())
+        logger.info("OAuth token saved locally")
+    except Exception as e:
+        logger.error(f"Failed to save token: {e}")
+
+
+# --------------------------------------------------
+# MAIN ENTRY
+# --------------------------------------------------
+
+def get_credentials():
+    """
+    Unified credential loader.
+
+    Priority:
+    1. Service Account (CI)
+    2. OAuth token from environment
+    3. OAuth token from local file
+    4. OAuth login flow (local only)
+    """
+
+    # ==================================================
+    # 1. SERVICE ACCOUNT (CI)
+    # ==================================================
+    creds = _load_service_account()
+    if creds:
+        return creds
+
+    # ==================================================
+    # 2. OAUTH TOKEN FROM ENV
+    # ==================================================
+    creds = _load_token_from_env()
+
+    # ==================================================
+    # 3. OAUTH TOKEN FROM LOCAL FILE
+    # ==================================================
+    if not creds:
+        creds = _load_token_from_file()
+
+    # ==================================================
+    # 4. VALIDATE / REFRESH
+    # ==================================================
+    if creds and creds.valid:
+        return creds
+
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            logger.info("Refreshing expired OAuth token")
+            creds.refresh(Request())
+            _save_token(creds)
+            return creds
+        except Exception as e:
+            logger.error(f"Token refresh failed: {e}")
+
+    # ==================================================
+    # 5. INTERACTIVE LOGIN (LOCAL ONLY)
+    # ==================================================
+    logger.info("Starting OAuth login flow (local only)")
+
+    if not os.path.exists(CREDS_FILE):
+        raise FileNotFoundError(
+            "credentials.json not found. Required for OAuth login."
+        )
+
+    flow = InstalledAppFlow.from_client_secrets_file(
+        CREDS_FILE,
+        SCOPES,
+    )
+
+    creds = flow.run_local_server(port=0)
+
+    _save_token(creds)
 
     return creds
