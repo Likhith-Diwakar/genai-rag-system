@@ -27,31 +27,25 @@ QDRANT_FOLDER_ID = os.getenv("QDRANT_FOLDER_ID")
 
 
 # --------------------------------------------------
-# DELETE EXISTING FILE
+# FIND EXISTING FILE
 # --------------------------------------------------
 
-def delete_existing_file(service, folder_id, filename):
+def find_existing_file(service, folder_id, filename):
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
 
     results = service.files().list(
         q=query,
-        fields="files(id, name)"
+        fields="files(id, name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
     ).execute()
 
     files = results.get("files", [])
-
-    for file in files:
-        try:
-            service.files().delete(fileId=file["id"]).execute()
-            print(f"Deleted old file: {file['name']}")
-        except Exception as delete_error:
-            raise RuntimeError(
-                f"Failed to delete existing backup {file['name']}: {delete_error}"
-            )
+    return files[0] if files else None
 
 
 # --------------------------------------------------
-# UPLOAD BACKUP
+# UPLOAD / UPDATE BACKUP
 # --------------------------------------------------
 
 def upload_backup(file_path: str, backup_type: str):
@@ -79,13 +73,7 @@ def upload_backup(file_path: str, backup_type: str):
         raise ValueError("Backup folder ID not set in environment variables")
 
     # --------------------------------------------------
-    # DELETE OLD FILE FIRST
-    # --------------------------------------------------
-
-    delete_existing_file(service, folder_id, filename)
-
-    # --------------------------------------------------
-    # PREPARE UPLOAD
+    # PREPARE FILE
     # --------------------------------------------------
 
     file_metadata = {
@@ -103,14 +91,29 @@ def upload_backup(file_path: str, backup_type: str):
     )
 
     # --------------------------------------------------
-    # UPLOAD FILE
+    # UPSERT LOGIC (UPDATE OR CREATE)
     # --------------------------------------------------
 
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-    ).execute()
+    existing_file = find_existing_file(service, folder_id, filename)
 
-    print(f"Uploaded successfully: {filename}")
-    print(f"Drive File ID: {file.get('id')}")
+    if existing_file:
+        # UPDATE (overwrite existing file)
+        service.files().update(
+            fileId=existing_file["id"],
+            media_body=media,
+            supportsAllDrives=True
+        ).execute()
+
+        print(f"Updated existing backup: {filename}")
+
+    else:
+        # CREATE new file
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True
+        ).execute()
+
+        print(f"Created new backup: {filename}")
+        print(f"Drive File ID: {file.get('id')}")
