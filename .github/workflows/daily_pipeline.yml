@@ -55,12 +55,8 @@ jobs:
           echo "SQLITE_FOLDER_ID=${{ secrets.SQLITE_FOLDER_ID }}" >> $GITHUB_ENV
           echo "QDRANT_FOLDER_ID=${{ secrets.QDRANT_FOLDER_ID }}" >> $GITHUB_ENV
 
-      # --------------------------------------------------
-      # SETUP OAUTH TOKEN (REPLACES SERVICE ACCOUNT)
-      # --------------------------------------------------
-      - name: Setup OAuth Token
-        run: |
-          echo "${{ secrets.GOOGLE_DRIVE_TOKEN }}" | base64 --decode > token.json
+          # IMPORTANT: Service Account JSON
+          echo "GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}" >> $GITHUB_ENV
 
       # --------------------------------------------------
       # RUN PIPELINE
