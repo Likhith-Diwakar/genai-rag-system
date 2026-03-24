@@ -26,9 +26,6 @@ CREDS_FILE = "credentials.json"
 # --------------------------------------------------
 
 def _load_service_account():
-    """
-    Load service account credentials from environment (GitHub Actions).
-    """
     sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
     if not sa_json:
@@ -50,13 +47,10 @@ def _load_service_account():
 
 
 # --------------------------------------------------
-# OAUTH FROM ENV (CI fallback)
+# OAUTH FROM ENV (CI)
 # --------------------------------------------------
 
 def _load_token_from_env():
-    """
-    Load OAuth token from base64-encoded GitHub secret.
-    """
     token_base64 = os.getenv("GOOGLE_DRIVE_TOKEN")
 
     if not token_base64:
@@ -80,9 +74,6 @@ def _load_token_from_env():
 # --------------------------------------------------
 
 def _load_token_from_file():
-    """
-    Load OAuth token from local file.
-    """
     if not os.path.exists(TOKEN_FILE):
         return None
 
@@ -97,13 +88,10 @@ def _load_token_from_file():
 
 
 # --------------------------------------------------
-# SAVE TOKEN (LOCAL)
+# SAVE TOKEN
 # --------------------------------------------------
 
 def _save_token(creds):
-    """
-    Save OAuth token locally.
-    """
     try:
         with open(TOKEN_FILE, "w") as token:
             token.write(creds.to_json())
@@ -116,38 +104,48 @@ def _save_token(creds):
 # MAIN ENTRY
 # --------------------------------------------------
 
-def get_credentials():
+def get_credentials(force_oauth=False):
     """
     Unified credential loader.
 
-    Priority:
-    1. Service Account (CI)
-    2. OAuth token from environment
-    3. OAuth token from local file
-    4. OAuth login flow (local only)
+    Modes:
+    - Default: Service Account → OAuth fallback
+    - force_oauth=True: Skip service account and use OAuth only
     """
 
-    # ==================================================
-    # 1. SERVICE ACCOUNT (CI)
-    # ==================================================
-    creds = _load_service_account()
-    if creds:
-        return creds
+    creds = None
 
     # ==================================================
-    # 2. OAUTH TOKEN FROM ENV
+    # 0. FORCE OAUTH (for backup uploads)
     # ==================================================
-    creds = _load_token_from_env()
+    if force_oauth:
+        creds = _load_token_from_env() or _load_token_from_file()
+
+        if creds and creds.valid:
+            return creds
+
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                logger.info("Refreshing OAuth token (forced mode)")
+                creds.refresh(Request())
+                _save_token(creds)
+                return creds
+            except Exception as e:
+                logger.error(f"Forced OAuth refresh failed: {e}")
 
     # ==================================================
-    # 3. OAUTH TOKEN FROM LOCAL FILE
+    # 1. SERVICE ACCOUNT (CI default)
     # ==================================================
-    if not creds:
-        creds = _load_token_from_file()
+    if not force_oauth:
+        creds = _load_service_account()
+        if creds:
+            return creds
 
     # ==================================================
-    # 4. VALIDATE / REFRESH
+    # 2. OAUTH TOKEN (ENV / LOCAL)
     # ==================================================
+    creds = _load_token_from_env() or _load_token_from_file()
+
     if creds and creds.valid:
         return creds
 
@@ -161,7 +159,7 @@ def get_credentials():
             logger.error(f"Token refresh failed: {e}")
 
     # ==================================================
-    # 5. INTERACTIVE LOGIN (LOCAL ONLY)
+    # 3. INTERACTIVE LOGIN (LOCAL ONLY)
     # ==================================================
     logger.info("Starting OAuth login flow (local only)")
 
@@ -175,7 +173,12 @@ def get_credentials():
         SCOPES,
     )
 
-    creds = flow.run_local_server(port=0)
+    # IMPORTANT: ensures refresh_token is generated
+    creds = flow.run_local_server(
+        port=0,
+        access_type="offline",
+        prompt="consent"
+    )
 
     _save_token(creds)
 
