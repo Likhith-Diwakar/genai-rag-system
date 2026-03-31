@@ -33,15 +33,7 @@ jobs:
           pip install --upgrade --force-reinstall google-genai
 
       # --------------------------------------------------
-      #  FIX 1: SETUP SERVICE ACCOUNT
-      # --------------------------------------------------
-      - name: Setup Google Credentials
-        run: |
-          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > credentials.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=credentials.json" >> $GITHUB_ENV
-
-      # --------------------------------------------------
-      #  FIX 2: CORRECT ENV VARIABLES
+      # ENV VARIABLES
       # --------------------------------------------------
       - name: Set environment variables
         run: |
@@ -51,6 +43,24 @@ jobs:
           echo "HF_API_TOKEN=${{ secrets.HF_API_TOKEN }}" >> $GITHUB_ENV
           echo "SQLITE_FOLDER_ID=${{ secrets.SQLITE_FOLDER_ID }}" >> $GITHUB_ENV
           echo "QDRANT_FOLDER_ID=${{ secrets.QDRANT_FOLDER_ID }}" >> $GITHUB_ENV
+
+      # --------------------------------------------------
+      # SERVICE ACCOUNT (MULTILINE SAFE)
+      # --------------------------------------------------
+      - name: Export Service Account JSON
+        run: |
+          echo "GOOGLE_SERVICE_ACCOUNT_JSON<<EOF" >> $GITHUB_ENV
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # --------------------------------------------------
+      # OAUTH TOKEN (MULTILINE SAFE FIX)
+      # --------------------------------------------------
+      - name: Export OAuth Token
+        run: |
+          echo "GOOGLE_DRIVE_TOKEN<<EOF" >> $GITHUB_ENV
+          echo '${{ secrets.GOOGLE_DRIVE_TOKEN }}' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Verify Gemini SDK
         run: |
