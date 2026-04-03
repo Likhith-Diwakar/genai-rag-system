@@ -1,5 +1,6 @@
 import os
 import requests
+import certifi
 from typing import List
 from src.interfaces.base_embedder import BaseEmbedder
 
@@ -23,20 +24,38 @@ class BGEEmbedder(BaseEmbedder):
     def embed(self, texts: List[str]) -> List[List[float]]:
         """
         Batch embedding call to HuggingFace Inference Router.
-        Sends all texts in a single request to avoid timeout issues.
+        Adds SSL-safe handling + retry fallback.
         """
 
         if not texts:
             return []
 
-        response = requests.post(
-            HF_API_URL,
-            headers=self.headers,
-            json={
-                "inputs": texts
-            },
-            timeout=180  # increased timeout for large batches
-        )
+        payload = {
+            "inputs": texts
+        }
+
+        try:
+            # Primary request (secure)
+            response = requests.post(
+                HF_API_URL,
+                headers=self.headers,
+                json=payload,
+                timeout=180,
+                verify=certifi.where()
+            )
+
+        except requests.exceptions.SSLError:
+            # Fallback (only if SSL fails)
+            response = requests.post(
+                HF_API_URL,
+                headers=self.headers,
+                json=payload,
+                timeout=180,
+                verify=False
+            )
+
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Embedding request failed: {str(e)}")
 
         if response.status_code != 200:
             raise Exception(
@@ -48,12 +67,13 @@ class BGEEmbedder(BaseEmbedder):
 
         # Handle different HF response formats safely
         if isinstance(result, list):
-            # Case 1: Already batch embeddings [[...], [...]]
-            if isinstance(result[0], list):
+
+            # Case 1: batch embeddings [[...], [...]]
+            if result and isinstance(result[0], list):
                 return result
 
-            # Case 2: Single embedding returned as flat list
-            if isinstance(result[0], float):
+            # Case 2: single embedding [....]
+            if result and isinstance(result[0], float):
                 return [result]
 
         raise Exception(

@@ -1,5 +1,3 @@
-# src/llm/rag.py
-
 import re
 
 from src.providers.llm.groq_llm import GroqLLM
@@ -12,12 +10,21 @@ from src.llm.llm_router import route_llm
 from src.utils.logger import logger
 
 
-def generate_answer(query: str, k: int = 7):
-
+def generate_answer(
+    query: str,
+    k: int = 7,
+    documents=None,
+    metadatas=None,
+    scores=None
+):
     logger.info(f"RAG query received: {query}")
 
-    retriever = HybridRetriever()
-    documents, metadatas, scores = retriever.retrieve(query, k)
+    # --------------------------------------------
+    # USE PASSED DOCUMENTS OR FALLBACK TO RETRIEVAL
+    # --------------------------------------------
+    if documents is None:
+        retriever = HybridRetriever()
+        documents, metadatas, scores = retriever.retrieve(query, k)
 
     if not documents:
         logger.warning("No documents retrieved from vector store.")
@@ -85,8 +92,8 @@ def generate_answer(query: str, k: int = 7):
 
     combined.sort(key=lambda x: x[2], reverse=True)
 
-    MAX_CONTEXT_CHARS = 5000
-    GLOBAL_TOP_K = min(k, 7)
+    max_context_chars = 5000
+    global_top_k = min(k, 7)
 
     selected_chunks = []
     current_length = 0
@@ -94,7 +101,7 @@ def generate_answer(query: str, k: int = 7):
 
     for doc, meta, score in combined:
 
-        if len(selected_chunks) >= GLOBAL_TOP_K:
+        if len(selected_chunks) >= global_top_k:
             break
 
         chunk_id = meta.get("chunk_id")
@@ -105,7 +112,7 @@ def generate_answer(query: str, k: int = 7):
         if chunk_key in seen_chunk_ids:
             continue
 
-        if current_length + len(doc) > MAX_CONTEXT_CHARS:
+        if current_length + len(doc) > max_context_chars:
             continue
 
         selected_chunks.append((doc, meta, score))
@@ -200,7 +207,7 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION (QUERY-ALIGNED SOURCE)
+    # TRUE SOURCE DETECTION
     # ---------------------------------------------------------
 
     source_files = []

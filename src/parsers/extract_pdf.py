@@ -4,300 +4,241 @@ import pdfplumber
 import pandas as pd
 import unicodedata
 from pdf2image import convert_from_path
+
 from src.utils.logger import logger
-from src.parsers.vision_extractor import run_vision_extraction
+from src.utils.metrics import metrics
+from src.parsers.vision_extractor import run_vision_extraction, GeminiQuotaExhaustedError
 
 
 IMAGE_OUTPUT_DIR = "data/tmp/pdf_images"
 
 MIN_IMAGE_WIDTH = 80
 MIN_IMAGE_HEIGHT = 80
-MAX_VISION_CALLS_PER_DOC = 5
 
 
 def _ensure_image_dir():
     os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 
 
-# --------------------------------------------------
-# UNIVERSAL TEXT NORMALIZER
-# --------------------------------------------------
 def _normalize_text(text: str) -> str:
-
     if not text:
         return ""
-
     text = unicodedata.normalize("NFKC", text)
     text = re.sub(r"[\x00-\x08\x0B-\x1F\x7F]", " ", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-
     return text.strip()
 
 
-# --------------------------------------------------
-# CID CLEANER
-# --------------------------------------------------
 def _clean_cid_garbage(text: str):
-    cleaned = re.sub(r'\(cid:\d+\)', '', text)
-    cleaned = re.sub(r' {2,}', ' ', cleaned)
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    return cleaned.strip()
+    if not text:
+        return ""
+    text = re.sub(r"\(cid:\d+\)", "", text)
+    text = re.sub(r" {2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
-# --------------------------------------------------
-# TEXT QUALITY DETECTION (ALPHABET DENSITY)
-# --------------------------------------------------
+def _get_alpha_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    total = len(text)
+    alpha = sum(c.isalpha() for c in text)
+    return alpha / max(total, 1)
+
+
 def _is_text_low_quality(text: str) -> bool:
-    """
-    Detects broken CID/font encoded text using alphabet density.
-    If fewer than 40% of characters are alphabetic, treat as low quality.
-    Works at both page level and line level.
-    """
-
-    if not text or len(text.strip()) < 10:
-        return True
-
-    total_chars = len(text)
-    alpha_chars = sum(c.isalpha() for c in text)
-    alpha_ratio = alpha_chars / max(total_chars, 1)
-
-    return alpha_ratio < 0.40
+    return _get_alpha_ratio(text) < 0.40
 
 
-# --------------------------------------------------
-# SAFE PAGE TO IMAGE (no backend kwarg)
-# --------------------------------------------------
 def _convert_page_to_image(path: str, page_number: int):
-
     try:
-        images = convert_from_path(
+        return convert_from_path(
             path,
             dpi=300,
             first_page=page_number,
             last_page=page_number
         )
-        return images
-
     except Exception as e:
-        logger.error(
-            f"convert_from_path failed on page {page_number}. Error: {e}"
-        )
+        logger.error(f"Image conversion failed page {page_number}: {e}")
         return []
 
 
-# --------------------------------------------------
-# TABLE FORMATTER
-# --------------------------------------------------
-def _format_table(table, table_id=None):
-
-    if not table or len(table) < 2:
-        return []
-
-    try:
-        header = [str(cell).strip() if cell else "" for cell in table[0]]
-        rows = [
-            [str(cell).strip() if cell else "" for cell in row]
-            for row in table[1:]
-        ]
-
-        df = pd.DataFrame(rows, columns=header)
-
-        row_blocks = []
-
-        for _, row in df.iterrows():
-            block_lines = []
-            block_lines.append(f"TABLE_ID = {table_id}")
-            block_lines.append("TABLE_ROW_START")
-
-            for col in df.columns:
-                value = str(row[col]).strip()
-                if value:
-                    block_lines.append(f"{col} : {value}")
-
-            block_lines.append("TABLE_ROW_END")
-
-            row_text = "\n".join(block_lines).strip()
-            row_text = _normalize_text(row_text)
-
-            if row_text:
-                row_blocks.append(row_text)
-
-        return row_blocks
-
-    except Exception as e:
-        logger.warning(f"Table formatting failed, using fallback: {e}")
-        fallback_lines = []
-        for row in table:
-            cleaned = [
-                str(cell).strip() if cell is not None else ""
-                for cell in row
-            ]
-            fallback_lines.append(" | ".join(cleaned))
-
-        fallback_text = "TABLE_FALLBACK\n" + "\n".join(fallback_lines)
-        return [_normalize_text(fallback_text)]
-
-
-def _is_valid_bbox(x0, top, x1, bottom):
-    if x1 <= x0 or bottom <= top:
-        return False
-    if (x1 - x0) < MIN_IMAGE_WIDTH:
-        return False
-    if (bottom - top) < MIN_IMAGE_HEIGHT:
-        return False
-    return True
-
-
-# --------------------------------------------------
-# TABLE EXTRACTION
-# --------------------------------------------------
 def _extract_tables(page, page_number):
-    output_blocks = []
-    found_tables = page.find_tables()
-
-    for idx, table in enumerate(found_tables, start=1):
+    output = []
+    tables = page.find_tables()
+    for idx, table in enumerate(tables, start=1):
         extracted = table.extract()
-        if extracted:
-            formatted_rows = _format_table(
-                extracted,
-                table_id=f"PAGE_{page_number}_TABLE_{idx}"
-            )
-
-            for row_block in formatted_rows:
-                output_blocks.append(f"\n{row_block}\n")
-
-    return output_blocks
-
-
-# --------------------------------------------------
-# IMAGE SIGNIFICANCE DETECTION
-# --------------------------------------------------
-def _is_meaningful_image(x0, top, x1, bottom, page):
-
-    page_width = page.width
-    page_height = page.height
-    page_area = page_width * page_height
-
-    img_width = x1 - x0
-    img_height = bottom - top
-    img_area = img_width * img_height
-
-    area_ratio = img_area / page_area
-    width_ratio = img_width / page_width
-    height_ratio = img_height / page_height
-
-    if area_ratio >= 0.08:
-        return True
-    if width_ratio >= 0.35:
-        return True
-    if height_ratio >= 0.30:
-        return True
-
-    return False
+        if not extracted or len(extracted) < 2:
+            continue
+        try:
+            header = extracted[0]
+            rows = extracted[1:]
+            df = pd.DataFrame(rows, columns=header)
+            for _, row in df.iterrows():
+                lines = [
+                    f"TABLE_ID = PAGE_{page_number}_TABLE_{idx}",
+                    "TABLE_ROW_START"
+                ]
+                for col in df.columns:
+                    val = str(row[col]).strip()
+                    if val:
+                        lines.append(f"{col} : {val}")
+                lines.append("TABLE_ROW_END")
+                output.append(_normalize_text("\n".join(lines)))
+        except Exception:
+            continue
+    return output
 
 
-# --------------------------------------------------
-# LINE-LEVEL GARBAGE FILTER
-# --------------------------------------------------
-def _filter_low_quality_lines(text: str, page_number: int) -> str:
-    """
-    Filters individual lines that are low-quality (CID garbage)
-    while preserving the rest of the page text.
-    Used when the overall page alpha ratio looks healthy but
-    individual lines contain corrupted font glyphs.
-    Only applies to short/medium lines — long lines are
-    almost certainly real content and are always kept.
-    """
-
+def _filter_low_quality_lines(text: str) -> str:
+    if not text:
+        return ""
     lines = text.split("\n")
-    clean_lines = []
-
+    clean = []
     for line in lines:
-        stripped = line.strip()
-
-        if not stripped:
-            clean_lines.append(line)
+        s = line.strip()
+        if not s:
+            clean.append(line)
             continue
-
-        # Long lines are almost certainly real content — always keep
-        if len(stripped) > 80:
-            clean_lines.append(line)
+        if len(s) > 80:
+            clean.append(line)
             continue
-
-        if _is_text_low_quality(stripped):
-            logger.debug(
-                f"Page {page_number} | Dropped low-quality line: {repr(stripped[:60])}"
-            )
+        if _is_text_low_quality(s):
             continue
-
-        clean_lines.append(line)
-
-    return "\n".join(clean_lines)
+        clean.append(line)
+    return "\n".join(clean)
 
 
-# --------------------------------------------------
-# MAIN PDF EXTRACTION
-# --------------------------------------------------
 def extract_pdf_text(path: str) -> str:
 
-    logger.info(f"Extracting text + tables + vision from PDF: {path}")
+    logger.info(f"Extracting PDF: {path}")
 
     _ensure_image_dir()
-    combined_output = []
+
+    combined = []
+
+    # vision_attempts: every OCR attempt regardless of outcome
+    # vision_calls:    only successful OCR extractions
+    vision_attempts = 0
     vision_calls = 0
+    max_vision_calls = 3
+
+    # Set True on first 429 — stops all further OCR calls for this document
+    gemini_quota_exhausted = False
 
     with pdfplumber.open(path) as pdf:
 
+        total_pages = len(pdf.pages)
+
         for page_number, page in enumerate(pdf.pages, start=1):
 
-            logger.info(f"Page {page_number} contains {len(page.images)} raster images")
+            combined.append(f"\n\n===== PAGE {page_number} =====\n")
+            combined.append(f"PAGE_NUMBER : {page_number}")
 
-            combined_output.append(f"\n\n===== PAGE {page_number} =====\n")
-            combined_output.append(f"PAGE_NUMBER : {page_number}")
+            text = page.extract_text() or ""
+            alpha_ratio = _get_alpha_ratio(text)
 
-            text = page.extract_text()
+            logger.info(f"Page {page_number} | alpha_ratio={alpha_ratio:.2f}")
 
-            if text:
+            use_ocr = False
 
-                # Log page-level alpha ratio for diagnostics
-                alpha_chars = sum(c.isalpha() for c in text)
-                alpha_ratio = alpha_chars / max(len(text), 1)
-                logger.info(
-                    f"DEBUG Page {page_number} | alpha_ratio={alpha_ratio:.2f} | chars={len(text)}"
-                )
+            if _is_text_low_quality(text):
+                use_ocr = True
 
-                # Page-level OCR fallback: fires when whole page is heavily corrupted
-                if _is_text_low_quality(text) and vision_calls < MAX_VISION_CALLS_PER_DOC:
-                    logger.warning(
-                        f"Low quality page detected (page {page_number}, "
-                        f"alpha_ratio={alpha_ratio:.2f}). Using Vision OCR fallback."
+            if page_number <= 2 and alpha_ratio < 0.6:
+                use_ocr = True
+
+            if use_ocr:
+
+                if gemini_quota_exhausted:
+                    # Quota already known exhausted — skip API call entirely
+                    logger.info(
+                        f"Page {page_number} | Gemini quota exhausted — "
+                        f"using pdfplumber text fallback"
                     )
+                    text = _filter_low_quality_lines(text)
 
+                elif vision_calls >= max_vision_calls:
+                    logger.info(
+                        f"Page {page_number} | OCR budget exhausted "
+                        f"({vision_calls}/{max_vision_calls}) — "
+                        f"using pdfplumber text fallback"
+                    )
+                    text = _filter_low_quality_lines(text)
+
+                else:
                     images = _convert_page_to_image(path, page_number)
 
                     if images:
+                        vision_attempts += 1
+
+                        # Count every OCR attempt before the API call is made
+                        metrics.inc("ocr_attempts")
+
                         try:
                             vision_text = run_vision_extraction(images[0])
+
                             if vision_text:
                                 text = vision_text
                                 vision_calls += 1
+                                # Count only extractions that returned usable text
+                                metrics.inc("ocr_success")
                                 logger.info(
-                                    f"Vision OCR succeeded on page {page_number}. "
-                                    f"vision_calls={vision_calls}"
+                                    f"OCR success page {page_number} | "
+                                    f"attempts={vision_attempts} "
+                                    f"successes={vision_calls}"
                                 )
+                            else:
+                                logger.warning(
+                                    f"Page {page_number} | OCR returned empty text, "
+                                    f"falling back to pdfplumber"
+                                )
+                                # API responded but returned nothing useful — treat as failure
+                                metrics.inc("ocr_fail")
+                                text = _filter_low_quality_lines(text)
+
+                        except GeminiQuotaExhaustedError:
+                            # 429 raised by vision_extractor — disable OCR immediately
+                            logger.warning(
+                                f"Page {page_number} | Gemini quota exhausted (429) — "
+                                f"disabling OCR for all remaining pages, "
+                                f"falling back to pdfplumber"
+                            )
+                            metrics.inc("ocr_fail")
+                            gemini_quota_exhausted = True
+                            text = _filter_low_quality_lines(text)
+
                         except Exception as e:
-                            logger.error(f"Vision extraction failed on page {page_number}: {e}")
+                            logger.warning(
+                                f"Page {page_number} | OCR failed unexpectedly: {e} — "
+                                f"falling back to pdfplumber"
+                            )
+                            metrics.inc("ocr_fail")
+                            text = _filter_low_quality_lines(text)
 
-                else:
-                    # Line-level filter: removes only corrupted lines on otherwise good pages
-                    text = _filter_low_quality_lines(text, page_number)
+                    else:
+                        logger.warning(
+                            f"Page {page_number} | Image conversion produced no output, "
+                            f"falling back to pdfplumber"
+                        )
+                        text = _filter_low_quality_lines(text)
 
-                text = _clean_cid_garbage(text)
-                text = _normalize_text(text)
-                combined_output.append(text)
+            else:
+                text = _filter_low_quality_lines(text)
 
-            table_blocks = _extract_tables(page, page_number)
-            combined_output.extend(table_blocks)
+            text = _clean_cid_garbage(text)
+            text = _normalize_text(text)
 
-    return "\n".join(combined_output)
+            if text:
+                combined.append(text)
+
+            tables = _extract_tables(page, page_number)
+            combined.extend(tables)
+
+    logger.info(
+        f"PDF extraction complete | pages={total_pages} "
+        f"ocr_attempts={vision_attempts} ocr_successes={vision_calls}"
+    )
+
+    return "\n".join(combined)

@@ -1,8 +1,10 @@
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
+
 from src.interfaces.base_llm import BaseLLM
 from src.utils.logger import logger
+from src.utils.metrics import metrics
 
 load_dotenv()
 
@@ -36,8 +38,23 @@ class OpenRouterLLM(BaseLLM):
                 max_tokens=600
             )
 
-            return completion.choices[0].message.content.strip()
+            response = completion.choices[0].message.content.strip()
+
+            if response:
+                metrics.inc_model(self.model_name)
+
+                # ✅ Token + Cost tracking
+                usage = getattr(completion, "usage", None)
+                if usage:
+                    input_tokens = getattr(usage, "prompt_tokens", 0)
+                    output_tokens = getattr(usage, "completion_tokens", 0)
+
+                    metrics.add_tokens(input_tokens, output_tokens)
+                    metrics.add_cost(self.model_name, input_tokens, output_tokens)
+
+            return response
 
         except Exception as e:
             logger.error(f"OpenRouter error for model={self.model_name}: {e}")
+            metrics.inc("llm_retries")
             return ""

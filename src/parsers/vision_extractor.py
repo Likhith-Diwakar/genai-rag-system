@@ -7,7 +7,6 @@ from src.utils.logger import logger
 from google import genai
 from google.genai.types import GenerateContentConfig, Part
 
-
 # --------------------------------------------------
 # Load environment
 # --------------------------------------------------
@@ -24,7 +23,6 @@ if GEMINI_API_KEY:
         logger.info(f"Gemini client initialized | model={MODEL_NAME}")
     except Exception as e:
         logger.error(f"Failed to initialize Gemini client: {e}")
-
 
 # --------------------------------------------------
 # Strong structured extraction prompt
@@ -78,6 +76,19 @@ Return ONLY extracted structured content.
 
 
 # --------------------------------------------------
+# Custom exception for quota exhaustion
+# --------------------------------------------------
+class GeminiQuotaExhaustedError(Exception):
+    """Raised when Gemini returns a 429 RESOURCE_EXHAUSTED error.
+
+    Callers should catch this specifically to disable further OCR
+    attempts for the rest of the current document, rather than
+    retrying immediately and burning the same quota again.
+    """
+    pass
+
+
+# --------------------------------------------------
 # Optional image optimization
 # --------------------------------------------------
 def _optimize_image(pil_image: Image.Image) -> Image.Image:
@@ -106,6 +117,18 @@ def _image_to_bytes(pil_image: Image.Image) -> bytes:
 # Vision extraction
 # --------------------------------------------------
 def run_vision_extraction(pil_image: Image.Image) -> str:
+    """
+    Extract text/structure from a PIL image using Gemini Vision.
+
+    Returns:
+        Extracted text string on success.
+        Empty string "" on non-fatal failures (empty response, short output, etc.)
+
+    Raises:
+        GeminiQuotaExhaustedError: on 429 RESOURCE_EXHAUSTED so the caller
+            can immediately stop attempting OCR for remaining pages instead
+            of making more doomed API calls.
+    """
 
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY not set. Skipping vision extraction.")
@@ -119,7 +142,6 @@ def run_vision_extraction(pil_image: Image.Image) -> str:
         logger.info("Calling Gemini Vision API...")
 
         optimized_image = _optimize_image(pil_image)
-
         image_bytes = _image_to_bytes(optimized_image)
 
         image_part = Part.from_bytes(data=image_bytes, mime_type="image/png")
@@ -158,5 +180,13 @@ def run_vision_extraction(pil_image: Image.Image) -> str:
         return cleaned
 
     except Exception as e:
+        error_str = str(e)
+
+
+        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            logger.error(f"Gemini vision extraction failed: {e}")
+            raise GeminiQuotaExhaustedError(str(e))
+
+        # All other errors: log and return empty so ingestion continues
         logger.error(f"Gemini vision extraction failed: {e}")
         return ""
