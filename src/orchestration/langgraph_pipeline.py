@@ -89,12 +89,10 @@ def rewrite_node(state: RAGState) -> RAGState:
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
-    # ❌ stop rewriting if retries exhausted
     if retry >= max_retries:
         state["rewritten_query"] = original_query
         return state
 
-    # skip rewrite if docs already found
     if state.get("retrieved_docs"):
         return state
 
@@ -258,47 +256,46 @@ def compute_confidence_node(state: RAGState) -> RAGState:
     return state
 
 
-# 🔥 FINAL FIXED DECISION NODE
+# 🔥 FINAL FIXED DECISION NODE (WITH LOOP BREAKER)
 def decision_node(state: RAGState) -> RAGState:
     track(state, "decision")
 
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
+    # 🚨 HARD LOOP BREAKER
+    if len(state.get("execution_path", [])) > 20:
+        state["next_step"] = "end"
+        return state
+
     # 🚨 HARD STOP
     if retry >= max_retries:
         state["next_step"] = "end"
         return state
 
-    # First pass → retrieve
     if retry == 0 and not state.get("retrieved_docs"):
         state["next_step"] = "retrieve"
         return state
 
-    # No docs → retry
     if not state.get("retrieved_docs"):
         state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
         return state
 
-    # Weak retrieval → retry
     if state.get("retrieval_status") in ["fail", "weak"]:
         state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
         return state
 
-    # No answer → generate
     if not state.get("answer"):
         state["next_step"] = "generate"
         return state
 
-    # Poor grounding → retry
     if state.get("answer_status") == "retry":
         state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
         return state
 
-    # Done
     state["next_step"] = "end"
     return state
 
