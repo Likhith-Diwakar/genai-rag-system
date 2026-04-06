@@ -1,6 +1,10 @@
 import sys
 import os
 
+# --------------------------------------------------
+# PATH FIX
+# --------------------------------------------------
+
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 )
@@ -9,16 +13,53 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# IMPORTANT: import inside try (prevents crash during startup)
+# --------------------------------------------------
+# IMPORTS
+# --------------------------------------------------
+
+# LangGraph pipeline
 try:
     from src.orchestration.langgraph_pipeline import run_pipeline
 except Exception as e:
     run_pipeline = None
-    print(f"Pipeline import error: {e}")
+    print(f"❌ Pipeline import error: {e}")
+
+# SQLite restore
+try:
+    from scripts.restore_sqlite import restore_sqlite_if_missing
+except Exception as e:
+    restore_sqlite_if_missing = None
+    print(f"❌ Restore import error: {e}")
+
+# --------------------------------------------------
+# APP INIT
+# --------------------------------------------------
 
 app = FastAPI()
 
-# ✅ CORS
+# --------------------------------------------------
+# STARTUP EVENT (🔥 CRITICAL FIX)
+# --------------------------------------------------
+
+@app.on_event("startup")
+def startup_event():
+    try:
+        print("🚀 Starting system initialization...")
+
+        if restore_sqlite_if_missing:
+            restore_sqlite_if_missing()
+            print("✅ SQLite restoration complete")
+        else:
+            print("⚠️ Restore function not available")
+
+    except Exception as e:
+        print("❌ Startup failed:", str(e))
+
+
+# --------------------------------------------------
+# CORS
+# --------------------------------------------------
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,21 +68,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ ROOT ROUTE (VERY IMPORTANT FOR RENDER)
+# --------------------------------------------------
+# ROUTES
+# --------------------------------------------------
+
 @app.get("/")
 def root():
     return {"status": "Backend running 🚀"}
 
-# ✅ HEALTH CHECK (Render friendly)
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-# Request model
+
+# --------------------------------------------------
+# REQUEST MODEL
+# --------------------------------------------------
+
 class QueryRequest(BaseModel):
     query: str
 
-# ✅ CHAT ENDPOINT
+
+# --------------------------------------------------
+# CHAT ENDPOINT
+# --------------------------------------------------
+
 @app.post("/chat")
 def chat(request: QueryRequest):
     try:
@@ -58,6 +110,7 @@ def chat(request: QueryRequest):
 
         if isinstance(result, dict):
 
+            # Extract answer robustly
             answer = (
                 result.get("answer")
                 or result.get("final_answer")
@@ -66,6 +119,7 @@ def chat(request: QueryRequest):
                 or result.get("result")
             )
 
+            # Extract sources
             raw_sources = result.get("sources", [])
 
             for src in raw_sources:
@@ -79,10 +133,11 @@ def chat(request: QueryRequest):
                             "url": f"https://drive.google.com/file/d/{file_id}/view"
                         })
 
+            # Remove duplicates
             unique_sources = {s["name"]: s for s in sources}.values()
 
             return {
-                "response": answer or "No response",
+                "response": answer or "No response generated.",
                 "sources": list(unique_sources)
             }
 
