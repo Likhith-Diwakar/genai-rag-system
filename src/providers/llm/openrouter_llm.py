@@ -43,7 +43,7 @@ class OpenRouterLLM(BaseLLM):
             if response:
                 metrics.inc_model(self.model_name)
 
-                # ✅ Token + Cost tracking
+                #Token + Cost tracking
                 usage = getattr(completion, "usage", None)
                 if usage:
                     input_tokens = getattr(usage, "prompt_tokens", 0)

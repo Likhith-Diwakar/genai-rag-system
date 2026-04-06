@@ -346,11 +346,11 @@ def build_graph():
     return graph.compile()
 
 
-def run_pipeline(query: str) -> str:
+def run_pipeline(query: str) -> dict:
     if not query or not query.strip():
         return "No query provided."
 
-    metrics.reset()  # ✅ ADD THIS HERE
+    metrics.reset()
     # FIX: use singleton compiled graph instead of rebuilding on every call
     app = get_app()
 
@@ -376,5 +376,12 @@ def run_pipeline(query: str) -> str:
 
     print("\nGRAPH PATH:", " -> ".join(result.get("execution_path", [])))
 
-    metrics.log(logger)  # ✅ ADD THIS
-    return result.get("answer") or "No response generated."
+    metrics.log(logger)
+    return {
+        "answer": result.get("answer") or "No response generated.",
+        "execution_path": result.get("execution_path", []),
+        "confidence": float(result.get("confidence", 0.0)),
+        "grounding_score": float(result.get("grounding_score", 0.0)),
+        "retrieval_score": float(result.get("retrieval_score", 0.0)),
+        "sources": result.get("retrieved_metas", [])
+    }
