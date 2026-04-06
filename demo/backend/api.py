@@ -9,10 +9,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src.orchestration.langgraph_pipeline import run_pipeline
+# IMPORTANT: import inside try (prevents crash during startup)
+try:
+    from src.orchestration.langgraph_pipeline import run_pipeline
+except Exception as e:
+    run_pipeline = None
+    print(f"Pipeline import error: {e}")
 
 app = FastAPI()
 
+# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,14 +27,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ ROOT ROUTE (VERY IMPORTANT FOR RENDER)
+@app.get("/")
+def root():
+    return {"status": "Backend running 🚀"}
 
+# ✅ HEALTH CHECK (Render friendly)
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+# Request model
 class QueryRequest(BaseModel):
     query: str
 
-
+# ✅ CHAT ENDPOINT
 @app.post("/chat")
 def chat(request: QueryRequest):
     try:
+        if run_pipeline is None:
+            return {
+                "response": "Pipeline failed to load",
+                "sources": []
+            }
+
         result = run_pipeline(request.query)
 
         answer = None
@@ -36,7 +58,6 @@ def chat(request: QueryRequest):
 
         if isinstance(result, dict):
 
-            # Extract answer
             answer = (
                 result.get("answer")
                 or result.get("final_answer")
@@ -45,7 +66,6 @@ def chat(request: QueryRequest):
                 or result.get("result")
             )
 
-            # Extract sources with clickable links
             raw_sources = result.get("sources", [])
 
             for src in raw_sources:
@@ -59,7 +79,6 @@ def chat(request: QueryRequest):
                             "url": f"https://drive.google.com/file/d/{file_id}/view"
                         })
 
-            # Remove duplicates
             unique_sources = {s["name"]: s for s in sources}.values()
 
             return {
