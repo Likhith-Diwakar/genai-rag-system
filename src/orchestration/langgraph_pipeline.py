@@ -29,7 +29,6 @@ class RAGState(TypedDict):
 
 rewriter = QueryRewriter()
 
-# singleton retriever
 _retriever = None
 def get_retriever():
     global _retriever
@@ -38,7 +37,6 @@ def get_retriever():
     return _retriever
 
 
-# singleton compiled graph
 _app = None
 def get_app():
     global _app
@@ -91,15 +89,13 @@ def rewrite_node(state: RAGState) -> RAGState:
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
-    if retry == 0 and not state.get("retrieved_docs"):
-        state["rewritten_query"] = original_query
-        return state
-
-    if state.get("retrieved_docs"):
-        return state
-
+    # ❌ stop rewriting if retries exhausted
     if retry >= max_retries:
         state["rewritten_query"] = original_query
+        return state
+
+    # skip rewrite if docs already found
+    if state.get("retrieved_docs"):
         return state
 
     track(state, "rewrite")
@@ -262,47 +258,48 @@ def compute_confidence_node(state: RAGState) -> RAGState:
     return state
 
 
-# ✅ FIXED DECISION NODE (MAIN BUG FIX)
+# 🔥 FINAL FIXED DECISION NODE
 def decision_node(state: RAGState) -> RAGState:
     track(state, "decision")
 
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
-    # 🚨 HARD STOP (FIXED)
+    # 🚨 HARD STOP
     if retry >= max_retries:
         state["next_step"] = "end"
-        print("NEXT STEP: end (max retries reached)")
-        log_state_summary(state)
-        return state  # ✅ CRITICAL
+        return state
 
-    if state.get("query_type") == "invalid":
-        state["next_step"] = "generate"
-
-    elif not state.get("retrieved_docs") and retry == 0:
+    # First pass → retrieve
+    if retry == 0 and not state.get("retrieved_docs"):
         state["next_step"] = "retrieve"
+        return state
 
-    elif not state.get("retrieved_docs"):
-        state["retry_count"] += 1
+    # No docs → retry
+    if not state.get("retrieved_docs"):
+        state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
+        return state
 
-    elif state.get("retrieval_status") in ["fail", "weak"]:
-        state["retry_count"] += 1
+    # Weak retrieval → retry
+    if state.get("retrieval_status") in ["fail", "weak"]:
+        state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
+        return state
 
-    elif state.get("retrieved_docs") and not state.get("answer"):
+    # No answer → generate
+    if not state.get("answer"):
         state["next_step"] = "generate"
+        return state
 
-    elif state.get("answer_status") == "retry":
-        state["retry_count"] += 1
+    # Poor grounding → retry
+    if state.get("answer_status") == "retry":
+        state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
+        return state
 
-    else:
-        state["next_step"] = "end"
-
-    print("NEXT STEP:", state.get("next_step"))
-    log_state_summary(state)
-
+    # Done
+    state["next_step"] = "end"
     return state
 
 
@@ -377,10 +374,6 @@ def run_pipeline(query: str) -> dict:
         },
         config={"recursion_limit": 50}
     )
-
-    print("\nGRAPH PATH:", " -> ".join(result.get("execution_path", [])))
-
-    metrics.log(logger)
 
     return {
         "answer": result.get("answer") or "No response generated.",
