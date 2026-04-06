@@ -17,14 +17,12 @@ from pydantic import BaseModel
 # IMPORTS
 # --------------------------------------------------
 
-# LangGraph pipeline
 try:
     from src.orchestration.langgraph_pipeline import run_pipeline
 except Exception as e:
     run_pipeline = None
     print(f"❌ Pipeline import error: {e}")
 
-# SQLite restore
 try:
     from scripts.restore_sqlite import restore_sqlite_if_missing
 except Exception as e:
@@ -38,22 +36,24 @@ except Exception as e:
 app = FastAPI()
 
 # --------------------------------------------------
-# STARTUP EVENT (🔥 CRITICAL FIX)
+# STARTUP INIT (🔥 ONLY THIS IS NEEDED)
 # --------------------------------------------------
 
 @app.on_event("startup")
 def startup_event():
     try:
-        print("🚀 Starting system initialization...")
+        print("🚀 STARTUP INIT BEGIN")
 
         if restore_sqlite_if_missing:
             restore_sqlite_if_missing()
-            print("✅ SQLite restoration complete")
+            print("✅ SQLite restored successfully")
         else:
             print("⚠️ Restore function not available")
 
+        print("🚀 STARTUP INIT COMPLETE")
+
     except Exception as e:
-        print("❌ Startup failed:", str(e))
+        print("❌ STARTUP ERROR:", str(e))
 
 
 # --------------------------------------------------
@@ -110,7 +110,6 @@ def chat(request: QueryRequest):
 
         if isinstance(result, dict):
 
-            # Extract answer robustly
             answer = (
                 result.get("answer")
                 or result.get("final_answer")
@@ -119,7 +118,6 @@ def chat(request: QueryRequest):
                 or result.get("result")
             )
 
-            # Extract sources
             raw_sources = result.get("sources", [])
 
             for src in raw_sources:
@@ -133,7 +131,6 @@ def chat(request: QueryRequest):
                             "url": f"https://drive.google.com/file/d/{file_id}/view"
                         })
 
-            # Remove duplicates
             unique_sources = {s["name"]: s for s in sources}.values()
 
             return {
