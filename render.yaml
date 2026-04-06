@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: genai-rag-system-1
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port 10000
+    rootDir: demo/backend
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
