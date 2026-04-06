@@ -2,4 +2,22 @@ fastapi
 uvicorn
 pydantic
 python-dotenv
+
+# core pipeline
 langgraph
+langchain-core
+loguru
+
+# vector + embeddings
+qdrant-client
+sentence-transformers
+
+# LLM providers
+openai
+groq
+google-generativeai
+
+# utilities
+requests
+numpy
+pandas
