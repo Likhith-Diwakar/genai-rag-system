@@ -5,6 +5,10 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
+const BACKEND_URL =
+  process.env.REACT_APP_BACKEND_URL ||
+  "https://genai-rag-system-2.onrender.com";
+
 /* ── tiny SVG icons ── */
 const IconSparkle = () => (
   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -131,26 +135,51 @@ export default function App() {
   const sendMessage = async (text) => {
     const query = text || input;
     if (!query.trim() || loading) return;
+
     setMessages(prev => [...prev, { type: "user", text: query }]);
     setInput("");
     setLoading(true);
+
     try {
-      const res = await fetch("http://127.0.0.1:8000/chat", {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+
+      const res = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ query }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        throw new Error("Server error");
+      }
+
       const data = await res.json();
-      setMessages(prev => [...prev, {
-        type: "ai",
-        text: data.response || "No response",
-        sources: data.sources || [],
-      }]);
-    } catch {
-      setMessages(prev => [...prev, {
-        type: "ai", text: "Error connecting to backend.", sources: [],
-      }]);
+
+      setMessages(prev => [
+        ...prev,
+        {
+          type: "ai",
+          text: data.response || "No response",
+          sources: data.sources || [],
+        },
+      ]);
+    } catch (err) {
+      setMessages(prev => [
+        ...prev,
+        {
+          type: "ai",
+          text: "⚠️ Backend is waking up or unreachable. Try again in a few seconds.",
+          sources: [],
+        },
+      ]);
     }
+
     setLoading(false);
   };
 

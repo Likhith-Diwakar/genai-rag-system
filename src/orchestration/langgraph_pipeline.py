@@ -29,7 +29,7 @@ class RAGState(TypedDict):
 
 rewriter = QueryRewriter()
 
-# FIX: singleton retriever (unchanged from original)
+# singleton retriever
 _retriever = None
 def get_retriever():
     global _retriever
@@ -38,10 +38,7 @@ def get_retriever():
     return _retriever
 
 
-# FIX: compile the graph once at module level instead of rebuilding it
-# on every call to run_pipeline(). build_graph() compiles the StateGraph
-# which involves node registration and edge validation — doing this per
-# query wastes ~50-100ms and creates unnecessary objects.
+# singleton compiled graph
 _app = None
 def get_app():
     global _app
@@ -69,6 +66,8 @@ def _is_meaningful_query(query: str) -> bool:
     return bool(query and query.strip())
 
 
+# ------------------ NODES ------------------
+
 def detect_query_type(state: RAGState) -> RAGState:
     track(state, "detect")
 
@@ -92,21 +91,17 @@ def rewrite_node(state: RAGState) -> RAGState:
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
-    # First pass — use query as-is, no rewrite needed, don't log to path
     if retry == 0 and not state.get("retrieved_docs"):
         state["rewritten_query"] = original_query
         return state
 
-    # Skip rewrite if we already have good docs (retry loop but docs exist)
     if state.get("retrieved_docs"):
         return state
 
-    # Max retries reached — fall back to original query, don't log to path
     if retry >= max_retries:
         state["rewritten_query"] = original_query
         return state
 
-    # Actual rewrite on retry passes — track it in the path
     track(state, "rewrite")
 
     try:
@@ -140,7 +135,9 @@ def retrieve_node(state: RAGState) -> RAGState:
     k = state.get("top_k", 5)
 
     try:
-        docs, metas, scores = get_retriever().retrieve(query, k, rewrite_before_retrieve=False)
+        docs, metas, scores = get_retriever().retrieve(
+            query, k, rewrite_before_retrieve=False
+        )
     except Exception:
         docs, metas, scores = [], [], []
 
@@ -217,12 +214,11 @@ def generate_node(state: RAGState) -> RAGState:
         return state
 
     try:
-
         answer, _ = generate_answer(
             query=state.get("query", ""),
             documents=docs,
             metadatas=state.get("retrieved_metas"),
-            scores=state.get("retrieved_scores")
+            scores=state.get("retrieved_scores"),
         )
     except Exception:
         answer = ""
@@ -251,8 +247,8 @@ def validate_answer_node(state: RAGState) -> RAGState:
 
     grounding = hits / len(docs)
     state["grounding_score"] = grounding
-
     state["answer_status"] = "good" if grounding > 0.3 else "retry"
+
     return state
 
 
@@ -266,32 +262,38 @@ def compute_confidence_node(state: RAGState) -> RAGState:
     return state
 
 
+# ✅ FIXED DECISION NODE (MAIN BUG FIX)
 def decision_node(state: RAGState) -> RAGState:
     track(state, "decision")
 
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
+    # 🚨 HARD STOP (FIXED)
+    if retry >= max_retries:
+        state["next_step"] = "end"
+        print("NEXT STEP: end (max retries reached)")
+        log_state_summary(state)
+        return state  # ✅ CRITICAL
+
     if state.get("query_type") == "invalid":
         state["next_step"] = "generate"
 
     elif not state.get("retrieved_docs") and retry == 0:
-        # First pass — skip rewrite, go straight to retrieve
         state["next_step"] = "retrieve"
 
-    elif not state.get("retrieved_docs") and retry < max_retries:
-        # Retry pass — retrieval previously failed, now rewrite
+    elif not state.get("retrieved_docs"):
         state["retry_count"] += 1
         state["next_step"] = "rewrite"
 
-    elif state.get("retrieval_status") in ["fail", "weak"] and retry < max_retries:
+    elif state.get("retrieval_status") in ["fail", "weak"]:
         state["retry_count"] += 1
         state["next_step"] = "rewrite"
 
     elif state.get("retrieved_docs") and not state.get("answer"):
         state["next_step"] = "generate"
 
-    elif state.get("answer_status") == "retry" and retry < max_retries:
+    elif state.get("answer_status") == "retry":
         state["retry_count"] += 1
         state["next_step"] = "rewrite"
 
@@ -327,8 +329,8 @@ def build_graph():
     graph.add_edge("detect", "decision")
 
     graph.add_conditional_edges("decision", router, {
-        "retrieve": "adjust_k",   # first pass — skip rewrite, go straight to adjust_k
-        "rewrite": "rewrite",     # retry pass — rewrite then adjust_k
+        "retrieve": "adjust_k",
+        "rewrite": "rewrite",
         "generate": "generate",
         "end": END
     })
@@ -348,35 +350,38 @@ def build_graph():
 
 def run_pipeline(query: str) -> dict:
     if not query or not query.strip():
-        return "No query provided."
+        return {"answer": "No query provided."}
 
     metrics.reset()
-    # FIX: use singleton compiled graph instead of rebuilding on every call
     app = get_app()
 
-    result = app.invoke({
-        "query": query.strip(),
-        "query_type": "",
-        "rewritten_query": "",
-        "retrieved_docs": [],
-        "retrieved_metas": [],
-        "retrieved_scores": [],
-        "retrieval_score": 0.0,
-        "answer": "",
-        "retry_count": 0,
-        "max_retries": 2,
-        "retrieval_status": "",
-        "top_k": 5,
-        "answer_status": "",
-        "execution_path": [],
-        "confidence": 0.0,
-        "grounding_score": 0.0,
-        "next_step": ""
-    })
+    result = app.invoke(
+        {
+            "query": query.strip(),
+            "query_type": "",
+            "rewritten_query": "",
+            "retrieved_docs": [],
+            "retrieved_metas": [],
+            "retrieved_scores": [],
+            "retrieval_score": 0.0,
+            "answer": "",
+            "retry_count": 0,
+            "max_retries": 2,
+            "retrieval_status": "",
+            "top_k": 5,
+            "answer_status": "",
+            "execution_path": [],
+            "confidence": 0.0,
+            "grounding_score": 0.0,
+            "next_step": ""
+        },
+        config={"recursion_limit": 50}
+    )
 
     print("\nGRAPH PATH:", " -> ".join(result.get("execution_path", [])))
 
     metrics.log(logger)
+
     return {
         "answer": result.get("answer") or "No response generated.",
         "execution_path": result.get("execution_path", []),
