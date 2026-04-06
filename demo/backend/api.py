@@ -24,7 +24,7 @@ except Exception as e:
     print(f"❌ Pipeline import error: {e}")
 
 try:
-    from scripts.restore_sqlite import restore_sqlite_if_missing
+    from scripts.restore_sqlite_from_drive import restore_sqlite_if_missing
 except Exception as e:
     restore_sqlite_if_missing = None
     print(f"❌ Restore import error: {e}")
@@ -35,12 +35,21 @@ except Exception as e:
 
 app = FastAPI()
 
+# Prevent duplicate restore
+INITIALIZED = False
+
 # --------------------------------------------------
-# STARTUP INIT (🔥 ONLY THIS IS NEEDED)
+# STARTUP INIT
 # --------------------------------------------------
 
 @app.on_event("startup")
 def startup_event():
+    global INITIALIZED
+
+    if INITIALIZED:
+        print("⚠️ Already initialized, skipping...")
+        return
+
     try:
         print("🚀 STARTUP INIT BEGIN")
 
@@ -48,8 +57,9 @@ def startup_event():
             restore_sqlite_if_missing()
             print("✅ SQLite restored successfully")
         else:
-            print("⚠️ Restore function not available")
+            print("❌ Restore function not available")
 
+        INITIALIZED = True
         print("🚀 STARTUP INIT COMPLETE")
 
     except Exception as e:
