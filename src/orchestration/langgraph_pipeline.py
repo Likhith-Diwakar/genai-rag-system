@@ -51,15 +51,6 @@ def track(state: RAGState, node_name: str):
     state["execution_path"] = path
 
 
-def log_state_summary(state: RAGState):
-    print("\nSTATE SUMMARY:")
-    print("Query:", state.get("query"))
-    print("Docs:", len(state.get("retrieved_docs", [])))
-    print("Retrieval Score:", state.get("retrieval_score"))
-    print("Grounding:", state.get("grounding_score"))
-    print("Confidence:", state.get("confidence"))
-
-
 def _is_meaningful_query(query: str) -> bool:
     return bool(query and query.strip())
 
@@ -135,6 +126,8 @@ def retrieve_node(state: RAGState) -> RAGState:
     except Exception:
         docs, metas, scores = [], [], []
 
+    print("🔍 RETRIEVED DOCS:", len(docs))  # DEBUG
+
     state["retrieved_docs"] = docs or []
     state["retrieved_metas"] = metas or []
     state["retrieved_scores"] = scores or []
@@ -198,26 +191,35 @@ def check_retrieval_node(state: RAGState) -> RAGState:
     return state
 
 
+# ✅ FIXED GENERATE NODE (WITH FALLBACK)
 def generate_node(state: RAGState) -> RAGState:
     track(state, "generate")
 
     docs = state.get("retrieved_docs") or []
 
-    if not docs:
-        state["answer"] = ""
-        return state
-
     try:
-        answer, _ = generate_answer(
-            query=state.get("query", ""),
-            documents=docs,
-            metadatas=state.get("retrieved_metas"),
-            scores=state.get("retrieved_scores"),
-        )
-    except Exception:
-        answer = ""
+        # 👉 If docs exist → RAG
+        if docs:
+            answer, _ = generate_answer(
+                query=state.get("query", ""),
+                documents=docs,
+                metadatas=state.get("retrieved_metas"),
+                scores=state.get("retrieved_scores"),
+            )
+        else:
+            # 👉 FALLBACK → LLM WITHOUT CONTEXT
+            answer, _ = generate_answer(
+                query=state.get("query", ""),
+                documents=[],
+                metadatas=[],
+                scores=[]
+            )
 
-    state["answer"] = answer or ""
+    except Exception as e:
+        print("❌ GENERATION ERROR:", str(e))
+        answer = "⚠️ Failed to generate answer."
+
+    state["answer"] = answer or "No answer generated."
     return state
 
 
@@ -227,8 +229,12 @@ def validate_answer_node(state: RAGState) -> RAGState:
     answer = state.get("answer", "")
     docs = state.get("retrieved_docs") or []
 
-    if not answer or not docs:
+    if not answer:
         state["answer_status"] = "retry"
+        return state
+
+    if not docs:
+        state["answer_status"] = "good"  # fallback case
         return state
 
     answer_tokens = set(answer.lower().split())
@@ -256,25 +262,18 @@ def compute_confidence_node(state: RAGState) -> RAGState:
     return state
 
 
-# 🔥 FINAL FIXED DECISION NODE (WITH LOOP BREAKER)
 def decision_node(state: RAGState) -> RAGState:
     track(state, "decision")
 
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
-    # 🚨 HARD LOOP BREAKER
     if len(state.get("execution_path", [])) > 20:
         state["next_step"] = "end"
         return state
 
-    # 🚨 HARD STOP
     if retry >= max_retries:
         state["next_step"] = "end"
-        return state
-
-    if retry == 0 and not state.get("retrieved_docs"):
-        state["next_step"] = "retrieve"
         return state
 
     if not state.get("retrieved_docs"):
@@ -373,7 +372,7 @@ def run_pipeline(query: str) -> dict:
     )
 
     return {
-        "answer": result.get("answer") or "No response generated.",
+        "answer": result.get("answer") or "⚠️ No answer generated",
         "execution_path": result.get("execution_path", []),
         "confidence": float(result.get("confidence", 0.0)),
         "grounding_score": float(result.get("grounding_score", 0.0)),
