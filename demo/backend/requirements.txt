@@ -3,21 +3,21 @@ uvicorn
 pydantic
 python-dotenv
 
-# core pipeline
 langgraph
 langchain-core
 loguru
 
-# vector + embeddings
 qdrant-client
-sentence-transformers
 
-# LLM providers
+sentence-transformers==2.6.1
+
+torch==2.2.2
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 openai
 groq
 google-generativeai
 
-# utilities
 requests
 numpy
 pandas
