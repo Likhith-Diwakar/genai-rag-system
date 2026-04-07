@@ -20,6 +20,9 @@ SCOPES = [
 TOKEN_FILE = "token.json"
 CREDS_FILE = "credentials.json"
 
+# Render sets this automatically, but we also allow manual override
+IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("IS_RENDER"))
+
 
 # --------------------------------------------------
 # SERVICE ACCOUNT (CI)
@@ -33,6 +36,11 @@ def _load_service_account():
 
     try:
         logger.info("Using Service Account authentication (CI mode)")
+
+        # Render double-escapes \n in env vars.
+        # The private key inside the JSON needs real newline characters,
+        # not the literal two-character sequence backslash-n.
+        sa_json = sa_json.replace("\\n", "\n")
 
         creds_dict = json.loads(sa_json)
 
@@ -109,8 +117,12 @@ def get_credentials(force_oauth=False):
     Unified credential loader.
 
     Modes:
-    - Default: Service Account → OAuth fallback
-    - force_oauth=True: Skip service account and use OAuth only
+    - Default: Service Account → OAuth token fallback
+    - force_oauth=True: Skip service account and use OAuth token only
+
+    On Render (IS_RENDER=True):
+    - Interactive OAuth login is blocked (no browser available)
+    - If all credential methods fail, raises RuntimeError immediately
     """
 
     creds = None
@@ -132,6 +144,13 @@ def get_credentials(force_oauth=False):
                 return creds
             except Exception as e:
                 logger.error(f"Forced OAuth refresh failed: {e}")
+
+        # If we're on Render and force_oauth still failed, raise clearly
+        if IS_RENDER:
+            raise RuntimeError(
+                "Force OAuth failed on Render. "
+                "Set GOOGLE_DRIVE_TOKEN env var with a valid base64-encoded token."
+            )
 
     # ==================================================
     # 1. SERVICE ACCOUNT (CI default)
@@ -159,8 +178,19 @@ def get_credentials(force_oauth=False):
             logger.error(f"Token refresh failed: {e}")
 
     # ==================================================
-    # 3. INTERACTIVE LOGIN (LOCAL ONLY)
+    # 3. INTERACTIVE LOGIN (LOCAL ONLY — never on Render)
     # ==================================================
+
+    # On Render there is no browser — interactive OAuth will hang forever
+    # or crash. Fail immediately with a clear message instead.
+    if IS_RENDER:
+        raise RuntimeError(
+            "All Google authentication methods failed on Render.\n"
+            "Fix: check that GOOGLE_SERVICE_ACCOUNT_JSON is set correctly "
+            "in your Render environment variables. The private_key field "
+            "must have real newlines (Render sometimes double-escapes them)."
+        )
+
     logger.info("Starting OAuth login flow (local only)")
 
     if not os.path.exists(CREDS_FILE):
@@ -173,7 +203,7 @@ def get_credentials(force_oauth=False):
         SCOPES,
     )
 
-    # IMPORTANT: ensures refresh_token is generated
+    # access_type=offline ensures a refresh_token is issued
     creds = flow.run_local_server(
         port=0,
         access_type="offline",

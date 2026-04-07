@@ -5,9 +5,17 @@ import os
 # PATH FIX
 # --------------------------------------------------
 
-sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-)
+# When Render runs from demo/backend/ as root directory,
+# we need to add the repo root (two levels up) to sys.path
+# so that "src.orchestration.langgraph_pipeline" can be found.
+# Also add the current directory itself as a fallback.
+
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_backend_dir, "..", ".."))
+
+for _path in [_backend_dir, _repo_root]:
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,8 +43,20 @@ except Exception as e:
 
 app = FastAPI()
 
-# Prevent duplicate restore
+# Prevent duplicate restore on hot-reload
 INITIALIZED = False
+
+# --------------------------------------------------
+# CORS
+# --------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --------------------------------------------------
 # STARTUP INIT
@@ -57,26 +77,16 @@ def startup_event():
             restore_sqlite_if_missing()
             print("✅ SQLite restored successfully")
         else:
-            print("❌ Restore function not available")
+            print("⚠️ Restore function not available — skipping SQLite restore")
 
         INITIALIZED = True
         print("🚀 STARTUP INIT COMPLETE")
 
     except Exception as e:
-        print("❌ STARTUP ERROR:", str(e))
+        # Log but don't crash — the API should still serve requests
+        # even if the restore step fails
+        print(f"❌ STARTUP ERROR: {str(e)}")
 
-
-# --------------------------------------------------
-# CORS
-# --------------------------------------------------
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # --------------------------------------------------
 # ROUTES
@@ -109,7 +119,7 @@ def chat(request: QueryRequest):
     try:
         if run_pipeline is None:
             return {
-                "response": "Pipeline failed to load",
+                "response": "Pipeline failed to load. Check backend logs.",
                 "sources": []
             }
 
@@ -141,11 +151,11 @@ def chat(request: QueryRequest):
                             "url": f"https://drive.google.com/file/d/{file_id}/view"
                         })
 
-            unique_sources = {s["name"]: s for s in sources}.values()
+            unique_sources = list({s["name"]: s for s in sources}.values())
 
             return {
                 "response": answer or "No response generated.",
-                "sources": list(unique_sources)
+                "sources": unique_sources
             }
 
         return {
