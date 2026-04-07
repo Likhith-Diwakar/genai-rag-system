@@ -5,11 +5,6 @@ import os
 # PATH FIX
 # --------------------------------------------------
 
-# When Render runs from demo/backend/ as root directory,
-# we need to add the repo root (two levels up) to sys.path
-# so that "src.orchestration.langgraph_pipeline" can be found.
-# Also add the current directory itself as a fallback.
-
 _backend_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.abspath(os.path.join(_backend_dir, "..", ".."))
 
@@ -29,13 +24,13 @@ try:
     from src.orchestration.langgraph_pipeline import run_pipeline
 except Exception as e:
     run_pipeline = None
-    print(f"❌ Pipeline import error: {e}")
+    print(f" Pipeline import error: {e}")
 
 try:
     from scripts.restore_sqlite_from_drive import restore_sqlite_if_missing
 except Exception as e:
     restore_sqlite_if_missing = None
-    print(f"❌ Restore import error: {e}")
+    print(f" Restore import error: {e}")
 
 # --------------------------------------------------
 # APP INIT
@@ -43,7 +38,6 @@ except Exception as e:
 
 app = FastAPI()
 
-# Prevent duplicate restore on hot-reload
 INITIALIZED = False
 
 # --------------------------------------------------
@@ -67,26 +61,23 @@ def startup_event():
     global INITIALIZED
 
     if INITIALIZED:
-        print("⚠️ Already initialized, skipping...")
+        print(" Already initialized, skipping...")
         return
 
     try:
-        print("🚀 STARTUP INIT BEGIN")
+        print(" STARTUP INIT BEGIN")
 
         if restore_sqlite_if_missing:
             restore_sqlite_if_missing()
-            print("✅ SQLite restored successfully")
+            print(" SQLite restored successfully")
         else:
-            print("⚠️ Restore function not available — skipping SQLite restore")
+            print(" Restore function not available — skipping SQLite restore")
 
         INITIALIZED = True
-        print("🚀 STARTUP INIT COMPLETE")
+        print("STARTUP INIT COMPLETE")
 
     except Exception as e:
-        # Log but don't crash — the API should still serve requests
-        # even if the restore step fails
         print(f"❌ STARTUP ERROR: {str(e)}")
-
 
 # --------------------------------------------------
 # ROUTES
@@ -94,7 +85,7 @@ def startup_event():
 
 @app.get("/")
 def root():
-    return {"status": "Backend running 🚀"}
+    return {"status": "Backend running "}
 
 
 @app.get("/health")
@@ -140,22 +131,24 @@ def chat(request: QueryRequest):
 
             raw_sources = result.get("sources", [])
 
-            for src in raw_sources:
-                if isinstance(src, dict):
-                    name = src.get("file_name")
-                    file_id = src.get("file_id")
+            # FIX: ONLY TAKE TOP SOURCE
+            if raw_sources and isinstance(raw_sources[0], dict):
+                name = raw_sources[0].get("file_name")
+                file_id = raw_sources[0].get("file_id")
 
-                    if name and file_id:
-                        sources.append({
-                            "name": name,
-                            "url": f"https://drive.google.com/file/d/{file_id}/view"
-                        })
-
-            unique_sources = list({s["name"]: s for s in sources}.values())
+                if name and file_id:
+                    sources = [{
+                        "name": name,
+                        "url": f"https://drive.google.com/file/d/{file_id}/view"
+                    }]
+                else:
+                    sources = []
+            else:
+                sources = []
 
             return {
                 "response": answer or "No response generated.",
-                "sources": unique_sources
+                "sources": sources
             }
 
         return {
