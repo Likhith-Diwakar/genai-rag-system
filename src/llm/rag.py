@@ -5,14 +5,14 @@ from src.providers.llm.openrouter_llm import OpenRouterLLM
 from src.providers.llm.gemini_llm import GeminiLLM
 
 from src.providers.retrievers.hybrid_retriever import HybridRetriever
-from src.llm.llm_router import route_llm
+from src.llm.llm_router import route_llm  # KEEP import (not used)
 
 from src.utils.logger import logger
 
 
 def generate_answer(
     query: str,
-    k: int = 7,
+    k: int = 4,  # CHANGED from 7 → 4
     documents=None,
     metadatas=None,
     scores=None
@@ -92,8 +92,8 @@ def generate_answer(
 
     combined.sort(key=lambda x: x[2], reverse=True)
 
-    max_context_chars = 5000
-    global_top_k = min(k, 7)
+    max_context_chars = 2500  # CHANGED from 5000 → 2500
+    global_top_k = min(k, 4)  # CHANGED from 7 → 4
 
     selected_chunks = []
     current_length = 0
@@ -147,15 +147,9 @@ Instructions:
 5. Do not combine rows or records unless the question explicitly requests aggregation.
 6. Perform arithmetic only if the question explicitly asks for a calculation.
 
-Code handling rules:
-
-7. If the context contains a code snippet that answers the question, return that code exactly as it appears in the context.
-8. If the context describes a programming task or algorithm but does not contain code, generate the code based strictly on the description present in the context.
-9. Do not introduce libraries, algorithms, or implementation details that are not implied by the context.
-
 Grounding rule:
 
-10. If the answer cannot be derived from the provided context, respond exactly with:
+If the answer cannot be derived from the provided context, respond exactly with:
 
 "I do not know based on the provided documents."
 """
@@ -171,10 +165,11 @@ Answer in a complete sentence:
 """
 
     # ---------------------------------------------------------
-    # MODEL ROUTING
+    # MODEL ROUTING (DISABLED BUT STRUCTURE KEPT)
     # ---------------------------------------------------------
 
-    model_name = route_llm(query)
+    # model_name = route_llm(query)
+    model_name = "groq"  # FORCED
 
     logger.info(f"Router selected model: {model_name}")
 
@@ -207,10 +202,9 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # SOURCE ATTRIBUTION (FIXED)
+    # SOURCE ATTRIBUTION (UNCHANGED)
     # ---------------------------------------------------------
 
-    # Always use top-ranked chunk as the source
     top_doc, top_meta, top_score = selected_chunks[0]
 
     source_files = [{

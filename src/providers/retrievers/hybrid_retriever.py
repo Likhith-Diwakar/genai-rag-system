@@ -19,7 +19,9 @@ class HybridRetriever:
         self.bm25.load()
 
         self.query_rewriter = QueryRewriter()
-        self.reranker = CrossEncoderReranker()
+
+        # FIX: disable cross encoder to prevent OOM
+        self.reranker = None
 
     def _keyword_score(self, query: str, document: str) -> float:
         query_tokens = set(re.findall(r"\w+", query.lower()))
@@ -183,7 +185,6 @@ class HybridRetriever:
 
     def retrieve(self, query: str, k: int = 5, rewrite_before_retrieve: bool = True):
 
-        # Track every retrieval call
         metrics.inc("retrieval_calls")
 
         if rewrite_before_retrieve:
@@ -202,7 +203,8 @@ class HybridRetriever:
             logger.exception("Failed to embed query")
             return [], [], []
 
-        CANDIDATE_MULTIPLIER = 8
+        # FIX: reduce memory load
+        CANDIDATE_MULTIPLIER = 4
         desired_n = k * CANDIDATE_MULTIPLIER
 
         try:
@@ -231,7 +233,6 @@ class HybridRetriever:
             logger.warning("No results returned from vector store")
             return [], [], []
 
-        # Track raw chunks returned from vector store before any scoring/filtering
         metrics.inc("chunks_retrieved", len(documents))
 
         semantic_scored = []
@@ -270,14 +271,15 @@ class HybridRetriever:
             top_k=k
         )
 
-        docs, metas, scores = self.reranker.rerank(
-            query,
-            docs,
-            metas,
-            scores
-        )
+        # FIX: safe reranker usage
+        if self.reranker:
+            docs, metas, scores = self.reranker.rerank(
+                query,
+                docs,
+                metas,
+                scores
+            )
 
-        # normalization fix
         if scores:
             try:
                 min_s = min(scores)
@@ -296,7 +298,6 @@ class HybridRetriever:
             top_k=k
         )
 
-        # Track chunks that survived diversity filtering and made it to the final result set
         metrics.inc("chunks_after_filter", len(docs))
 
         for i, (doc, meta, score) in enumerate(zip(docs, metas, scores)):
