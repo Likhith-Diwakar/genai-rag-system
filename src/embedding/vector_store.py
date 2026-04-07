@@ -143,13 +143,15 @@ class VectorStore:
         return count
 
     # ------------------------------------------------------
-    # QUERY (Qdrant v1.17 compatible)
+    # QUERY — compatible with qdrant-client 1.9.1
+    # query_points() was only added in qdrant-client 1.10+
+    # use search() instead which works on all 1.x versions
     # ------------------------------------------------------
     def query(self, embedding: list, n_results: int):
 
-        results = self.client.query_points(
+        results = self.client.search(
             collection_name=COLLECTION_NAME,
-            query=embedding,
+            query_vector=embedding,
             limit=n_results,
             with_payload=True,
         )
@@ -158,7 +160,9 @@ class VectorStore:
         metadatas = []
         distances = []
 
-        for hit in results.points:
+        # search() returns a flat list of ScoredPoint objects directly
+        # (no .points attribute like query_points() has)
+        for hit in results:
 
             payload = hit.payload or {}
 
@@ -169,7 +173,7 @@ class VectorStore:
                 {k: v for k, v in payload.items() if k != "document"}
             )
 
-            # Convert similarity to distance-like value
+            # Convert cosine similarity score to distance-like value
             distances.append(1 - hit.score)
 
         return {
