@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import base64
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
@@ -20,8 +21,64 @@ SCOPES = [
 TOKEN_FILE = "token.json"
 CREDS_FILE = "credentials.json"
 
-# Render sets this automatically, but we also allow manual override
 IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("IS_RENDER"))
+
+
+# --------------------------------------------------
+# ROBUST JSON PARSER
+# --------------------------------------------------
+
+def _parse_service_account_json(raw: str) -> dict:
+    """
+    Render corrupts JSON env vars in multiple ways.
+    Tries every known fix strategy before giving up.
+    """
+
+    # Strategy 1: parse as-is
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+
+    # Strategy 2: double-escaped newlines \\n -> \n
+    try:
+        return json.loads(raw.replace("\\\\n", "\\n"))
+    except Exception:
+        pass
+
+    # Strategy 3: actual newline characters -> \n escape
+    try:
+        fixed = raw.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
+        return json.loads(fixed)
+    except Exception:
+        pass
+
+    # Strategy 4: fix only the private key block (most common Render issue)
+    # Real newlines inside the private key value corrupt the JSON
+    try:
+        def escape_key_newlines(match):
+            return match.group(0).replace("\n", "\\n").replace("\r", "")
+
+        fixed = re.sub(
+            r'-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----',
+            escape_key_newlines,
+            raw,
+            flags=re.DOTALL
+        )
+        return json.loads(fixed)
+    except Exception:
+        pass
+
+    # Strategy 5: base64-encoded JSON
+    try:
+        return json.loads(base64.b64decode(raw).decode("utf-8"))
+    except Exception:
+        pass
+
+    raise ValueError(
+        f"Could not parse GOOGLE_SERVICE_ACCOUNT_JSON. "
+        f"First 100 chars: {raw[:100]!r}"
+    )
 
 
 # --------------------------------------------------
@@ -32,18 +89,12 @@ def _load_service_account():
     sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
     if not sa_json:
+        logger.warning("GOOGLE_SERVICE_ACCOUNT_JSON env var is not set")
         return None
 
     try:
         logger.info("Using Service Account authentication (CI mode)")
-
-        # Render double-escapes \n in env vars.
-        # The private key inside the JSON needs real newline characters,
-        # not the literal two-character sequence backslash-n.
-        sa_json = sa_json.replace("\\n", "\n")
-
-        creds_dict = json.loads(sa_json)
-
+        creds_dict = _parse_service_account_json(sa_json)
         return service_account.Credentials.from_service_account_info(
             creds_dict,
             scopes=SCOPES
@@ -66,10 +117,8 @@ def _load_token_from_env():
 
     try:
         logger.info("Loading OAuth token from environment")
-
         decoded = base64.b64decode(token_base64).decode("utf-8")
         token_data = json.loads(decoded)
-
         return Credentials.from_authorized_user_info(token_data, SCOPES)
 
     except Exception as e:
@@ -87,7 +136,6 @@ def _load_token_from_file():
 
     try:
         logger.info("Loading OAuth token from local file")
-
         return Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
     except Exception as e:
@@ -118,11 +166,9 @@ def get_credentials(force_oauth=False):
 
     Modes:
     - Default: Service Account → OAuth token fallback
-    - force_oauth=True: Skip service account and use OAuth token only
+    - force_oauth=True: Skip service account, use OAuth token only
 
-    On Render (IS_RENDER=True):
-    - Interactive OAuth login is blocked (no browser available)
-    - If all credential methods fail, raises RuntimeError immediately
+    On Render: interactive OAuth is blocked — no browser available.
     """
 
     creds = None
@@ -145,7 +191,6 @@ def get_credentials(force_oauth=False):
             except Exception as e:
                 logger.error(f"Forced OAuth refresh failed: {e}")
 
-        # If we're on Render and force_oauth still failed, raise clearly
         if IS_RENDER:
             raise RuntimeError(
                 "Force OAuth failed on Render. "
@@ -181,14 +226,11 @@ def get_credentials(force_oauth=False):
     # 3. INTERACTIVE LOGIN (LOCAL ONLY — never on Render)
     # ==================================================
 
-    # On Render there is no browser — interactive OAuth will hang forever
-    # or crash. Fail immediately with a clear message instead.
     if IS_RENDER:
         raise RuntimeError(
             "All Google authentication methods failed on Render.\n"
             "Fix: check that GOOGLE_SERVICE_ACCOUNT_JSON is set correctly "
-            "in your Render environment variables. The private_key field "
-            "must have real newlines (Render sometimes double-escapes them)."
+            "in your Render environment variables."
         )
 
     logger.info("Starting OAuth login flow (local only)")
@@ -198,12 +240,8 @@ def get_credentials(force_oauth=False):
             "credentials.json not found. Required for OAuth login."
         )
 
-    flow = InstalledAppFlow.from_client_secrets_file(
-        CREDS_FILE,
-        SCOPES,
-    )
+    flow = InstalledAppFlow.from_client_secrets_file(CREDS_FILE, SCOPES)
 
-    # access_type=offline ensures a refresh_token is issued
     creds = flow.run_local_server(
         port=0,
         access_type="offline",
@@ -211,5 +249,4 @@ def get_credentials(force_oauth=False):
     )
 
     _save_token(creds)
-
     return creds
