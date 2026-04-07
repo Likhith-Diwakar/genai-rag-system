@@ -24,13 +24,13 @@ try:
     from src.orchestration.langgraph_pipeline import run_pipeline
 except Exception as e:
     run_pipeline = None
-    print(f" Pipeline import error: {e}")
+    print(f"Pipeline import error: {e}")
 
 try:
     from scripts.restore_sqlite_from_drive import restore_sqlite_if_missing
 except Exception as e:
     restore_sqlite_if_missing = None
-    print(f" Restore import error: {e}")
+    print(f"Restore import error: {e}")
 
 # --------------------------------------------------
 # APP INIT
@@ -61,23 +61,23 @@ def startup_event():
     global INITIALIZED
 
     if INITIALIZED:
-        print(" Already initialized, skipping...")
+        print("Already initialized, skipping...")
         return
 
     try:
-        print(" STARTUP INIT BEGIN")
+        print("STARTUP INIT BEGIN")
 
         if restore_sqlite_if_missing:
             restore_sqlite_if_missing()
-            print(" SQLite restored successfully")
+            print("SQLite restored successfully")
         else:
-            print(" Restore function not available — skipping SQLite restore")
+            print("Restore function not available — skipping SQLite restore")
 
         INITIALIZED = True
         print("STARTUP INIT COMPLETE")
 
     except Exception as e:
-        print(f"❌ STARTUP ERROR: {str(e)}")
+        print(f"STARTUP ERROR: {str(e)}")
 
 # --------------------------------------------------
 # ROUTES
@@ -85,7 +85,7 @@ def startup_event():
 
 @app.get("/")
 def root():
-    return {"status": "Backend running "}
+    return {"status": "Backend running"}
 
 
 @app.get("/health")
@@ -129,9 +129,29 @@ def chat(request: QueryRequest):
                 or result.get("result")
             )
 
+            # --------------------------------------------------
+            # FIX 1: HANDLE NO-ANSWER CASE
+            # --------------------------------------------------
+
+            NO_ANSWER_TEXT = "I do not know based on the provided documents."
+
+            CUSTOM_FALLBACK = (
+                "I'm sorry, but I couldn't find relevant information in the indexed documents. "
+                "Please try asking a more specific question related to the documents available in the connected Google Drive."
+            )
+
+            if answer and answer.strip() == NO_ANSWER_TEXT:
+                return {
+                    "response": CUSTOM_FALLBACK,
+                    "sources": []
+                }
+
+            # --------------------------------------------------
+            # FIX 2: ONLY RETURN TOP SOURCE
+            # --------------------------------------------------
+
             raw_sources = result.get("sources", [])
 
-            # FIX: ONLY TAKE TOP SOURCE
             if raw_sources and isinstance(raw_sources[0], dict):
                 name = raw_sources[0].get("file_name")
                 file_id = raw_sources[0].get("file_id")
