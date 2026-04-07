@@ -142,7 +142,7 @@ export default function App() {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
+      const timeout = setTimeout(() => controller.abort(), 120000);
 
       const res = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
