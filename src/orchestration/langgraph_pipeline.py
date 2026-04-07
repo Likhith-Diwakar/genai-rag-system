@@ -126,7 +126,7 @@ def retrieve_node(state: RAGState) -> RAGState:
     except Exception:
         docs, metas, scores = [], [], []
 
-    print("🔍 RETRIEVED DOCS:", len(docs))  # DEBUG
+    print("🔍 RETRIEVED DOCS:", len(docs))
 
     state["retrieved_docs"] = docs or []
     state["retrieved_metas"] = metas or []
@@ -191,14 +191,12 @@ def check_retrieval_node(state: RAGState) -> RAGState:
     return state
 
 
-# ✅ FIXED GENERATE NODE (WITH FALLBACK)
 def generate_node(state: RAGState) -> RAGState:
     track(state, "generate")
 
     docs = state.get("retrieved_docs") or []
 
     try:
-        # 👉 If docs exist → RAG
         if docs:
             answer, _ = generate_answer(
                 query=state.get("query", ""),
@@ -207,7 +205,6 @@ def generate_node(state: RAGState) -> RAGState:
                 scores=state.get("retrieved_scores"),
             )
         else:
-            # 👉 FALLBACK → LLM WITHOUT CONTEXT
             answer, _ = generate_answer(
                 query=state.get("query", ""),
                 documents=[],
@@ -234,7 +231,7 @@ def validate_answer_node(state: RAGState) -> RAGState:
         return state
 
     if not docs:
-        state["answer_status"] = "good"  # fallback case
+        state["answer_status"] = "good"
         return state
 
     answer_tokens = set(answer.lower().split())
@@ -253,7 +250,9 @@ def validate_answer_node(state: RAGState) -> RAGState:
 
 
 def compute_confidence_node(state: RAGState) -> RAGState:
-    track(state, "confidence")
+    # Node renamed to "compute_confidence" to avoid clash with
+    # the "confidence" key in RAGState (LangGraph 0.0.62 restriction)
+    track(state, "compute_confidence")
 
     retrieval_conf = state.get("retrieval_score", 0.0)
     grounding = state.get("grounding_score", 0.0)
@@ -314,7 +313,7 @@ def build_graph():
     graph.add_node("check", check_retrieval_node)
     graph.add_node("generate", generate_node)
     graph.add_node("validate", validate_answer_node)
-    graph.add_node("confidence", compute_confidence_node)
+    graph.add_node("compute_confidence", compute_confidence_node)  # renamed
     graph.add_node("decision", decision_node)
 
     graph.set_entry_point("detect")
@@ -335,8 +334,8 @@ def build_graph():
     graph.add_edge("check", "decision")
 
     graph.add_edge("generate", "validate")
-    graph.add_edge("validate", "confidence")
-    graph.add_edge("confidence", "decision")
+    graph.add_edge("validate", "compute_confidence")  # renamed
+    graph.add_edge("compute_confidence", "decision")  # renamed
 
     return graph.compile()
 
