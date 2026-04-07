@@ -207,27 +207,15 @@ Answer in a complete sentence:
     logger.info("LLM returned a grounded answer.")
 
     # ---------------------------------------------------------
-    # TRUE SOURCE DETECTION
+    # SOURCE ATTRIBUTION (FIXED)
     # ---------------------------------------------------------
 
-    source_files = []
-    query_tokens = set(re.findall(r"\b[a-zA-Z]{3,}\b", query.lower()))
+    # Always use top-ranked chunk as the source
+    top_doc, top_meta, top_score = selected_chunks[0]
 
-    best_match = None
-    best_score = -1
-
-    for doc, meta, _ in selected_chunks:
-        doc_tokens = set(re.findall(r"\b[a-zA-Z]{3,}\b", doc.lower()))
-        overlap = len(query_tokens.intersection(doc_tokens))
-
-        if overlap > best_score:
-            best_score = overlap
-            best_match = meta
-
-    if best_match:
-        source_files.append({
-            "file_id": best_match.get("file_id"),
-            "file_name": best_match.get("file_name", "UNKNOWN")
-        })
+    source_files = [{
+        "file_id": top_meta.get("file_id"),
+        "file_name": top_meta.get("file_name", "UNKNOWN")
+    }]
 
     return answer, source_files
