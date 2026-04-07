@@ -76,25 +76,37 @@ def detect_query_type(state: RAGState) -> RAGState:
 
 
 def rewrite_node(state: RAGState) -> RAGState:
+    track(state, "rewrite")
+
     original_query = state.get("query", "")
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
+
+    # On first pass (retry=0), just use the original query directly.
+    # Only attempt LLM rewriting on subsequent retries, and only if
+    # we already have some context docs to guide the rewrite.
+    if retry == 0:
+        state["rewritten_query"] = original_query
+        return state
 
     if retry >= max_retries:
         state["rewritten_query"] = original_query
         return state
 
-    if state.get("retrieved_docs"):
-        return state
-
-    track(state, "rewrite")
+    # Use any previously retrieved docs as context for rewriting
+    existing_docs = state.get("retrieved_docs") or []
 
     try:
-        rewritten = rewriter.rewrite(original_query, [])
+        rewritten = rewriter.rewrite(original_query, existing_docs)
+        state["rewritten_query"] = (rewritten or original_query).strip()
     except Exception:
-        rewritten = original_query
+        state["rewritten_query"] = original_query
 
-    state["rewritten_query"] = (rewritten or original_query).strip()
+    logger.info(
+        f"Query rewrite | retry={retry} | "
+        f"original='{original_query}' | rewritten='{state['rewritten_query']}'"
+    )
+
     return state
 
 
@@ -123,10 +135,13 @@ def retrieve_node(state: RAGState) -> RAGState:
         docs, metas, scores = get_retriever().retrieve(
             query, k, rewrite_before_retrieve=False
         )
-    except Exception:
+    except Exception as e:
+        print(f"❌ RETRIEVAL EXCEPTION: {e}")
+        import traceback
+        traceback.print_exc()
         docs, metas, scores = [], [], []
 
-    print("🔍 RETRIEVED DOCS:", len(docs))
+    print(f"🔍 RETRIEVED DOCS: {len(docs)} for query: '{query}'")
 
     state["retrieved_docs"] = docs or []
     state["retrieved_metas"] = metas or []
@@ -147,7 +162,9 @@ def filter_retrieval_node(state: RAGState) -> RAGState:
         return state
 
     max_score = max(scores)
-    threshold = max(0.1, 0.5 * max_score)
+    # FIX: lowered threshold — after normalization scores are 0–1,
+    # using 0.5 * max_score was too aggressive and filtered everything out
+    threshold = max(0.05, 0.3 * max_score)
 
     f_docs, f_metas, f_scores = [], [], []
 
@@ -157,6 +174,7 @@ def filter_retrieval_node(state: RAGState) -> RAGState:
             f_metas.append(m)
             f_scores.append(s)
 
+    # Always keep at least top 2 even if below threshold
     if not f_docs and docs:
         f_docs, f_metas, f_scores = docs[:2], metas[:2], scores[:2]
 
@@ -178,12 +196,13 @@ def check_retrieval_node(state: RAGState) -> RAGState:
         state["retrieval_status"] = "fail"
         return state
 
+    # FIX: After RRF + normalization, scores are in 0–1 range but
+    # rarely exceed 0.75. Loosened thresholds so we reach "generate".
     top_score = max(scores)
-    avg_score = sum(scores) / len(scores)
 
-    if top_score > 0.75 and avg_score > 0.5:
+    if top_score > 0.3:
         state["retrieval_status"] = "good"
-    elif top_score > 0.5:
+    elif top_score > 0.1:
         state["retrieval_status"] = "weak"
     else:
         state["retrieval_status"] = "fail"
@@ -213,7 +232,9 @@ def generate_node(state: RAGState) -> RAGState:
             )
 
     except Exception as e:
-        print("❌ GENERATION ERROR:", str(e))
+        print(f"❌ GENERATION ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
         answer = "⚠️ Failed to generate answer."
 
     state["answer"] = answer or "No answer generated."
@@ -244,14 +265,15 @@ def validate_answer_node(state: RAGState) -> RAGState:
 
     grounding = hits / len(docs)
     state["grounding_score"] = grounding
-    state["answer_status"] = "good" if grounding > 0.3 else "retry"
+
+    # FIX: lowered grounding threshold — 0.3 was too strict,
+    # causing valid answers to be retried and eventually dropped
+    state["answer_status"] = "good" if grounding > 0.1 else "retry"
 
     return state
 
 
 def compute_confidence_node(state: RAGState) -> RAGState:
-    # Node renamed to "compute_confidence" to avoid clash with
-    # the "confidence" key in RAGState (LangGraph 0.0.62 restriction)
     track(state, "compute_confidence")
 
     retrieval_conf = state.get("retrieval_score", 0.0)
@@ -267,33 +289,44 @@ def decision_node(state: RAGState) -> RAGState:
     retry = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
 
+    # Safety valve against infinite loops
     if len(state.get("execution_path", [])) > 20:
         state["next_step"] = "end"
         return state
 
-    if retry >= max_retries:
+    # If query is invalid, end immediately
+    if state.get("query_type") == "invalid":
         state["next_step"] = "end"
         return state
 
-    if not state.get("retrieved_docs"):
-        state["retry_count"] = retry + 1
-        state["next_step"] = "rewrite"
+    # Haven't retrieved yet — go retrieve
+    if not state.get("rewritten_query") and not state.get("retrieved_docs"):
+        state["next_step"] = "retrieve"
         return state
 
-    if state.get("retrieval_status") in ["fail", "weak"]:
-        state["retry_count"] = retry + 1
-        state["next_step"] = "rewrite"
-        return state
-
-    if not state.get("answer"):
+    # Have docs but no answer yet — go generate
+    if state.get("retrieved_docs") and not state.get("answer"):
         state["next_step"] = "generate"
         return state
 
-    if state.get("answer_status") == "retry":
+    # Have a good answer — done
+    if state.get("answer") and state.get("answer_status") == "good":
+        state["next_step"] = "end"
+        return state
+
+    # Retrieval failed and we have retries left — rewrite and retry
+    if state.get("retrieval_status") == "fail" and retry < max_retries:
         state["retry_count"] = retry + 1
         state["next_step"] = "rewrite"
         return state
 
+    # Answer needs retry and we have retries left
+    if state.get("answer_status") == "retry" and retry < max_retries:
+        state["retry_count"] = retry + 1
+        state["next_step"] = "rewrite"
+        return state
+
+    # Exhausted retries or weak retrieval with an answer — just end
     state["next_step"] = "end"
     return state
 
@@ -313,12 +346,18 @@ def build_graph():
     graph.add_node("check", check_retrieval_node)
     graph.add_node("generate", generate_node)
     graph.add_node("validate", validate_answer_node)
-    graph.add_node("compute_confidence", compute_confidence_node)  # renamed
+    graph.add_node("compute_confidence", compute_confidence_node)
     graph.add_node("decision", decision_node)
 
     graph.set_entry_point("detect")
 
-    graph.add_edge("detect", "decision")
+    graph.add_edge("detect", "rewrite")  # FIX: always rewrite first, then decide
+
+    graph.add_edge("rewrite", "adjust_k")
+    graph.add_edge("adjust_k", "retrieve")
+    graph.add_edge("retrieve", "filter")
+    graph.add_edge("filter", "check")
+    graph.add_edge("check", "decision")
 
     graph.add_conditional_edges("decision", router, {
         "retrieve": "adjust_k",
@@ -327,15 +366,9 @@ def build_graph():
         "end": END
     })
 
-    graph.add_edge("rewrite", "adjust_k")
-    graph.add_edge("adjust_k", "retrieve")
-    graph.add_edge("retrieve", "filter")
-    graph.add_edge("filter", "check")
-    graph.add_edge("check", "decision")
-
     graph.add_edge("generate", "validate")
-    graph.add_edge("validate", "compute_confidence")  # renamed
-    graph.add_edge("compute_confidence", "decision")  # renamed
+    graph.add_edge("validate", "compute_confidence")
+    graph.add_edge("compute_confidence", "decision")
 
     return graph.compile()
 
@@ -369,6 +402,8 @@ def run_pipeline(query: str) -> dict:
         },
         config={"recursion_limit": 50}
     )
+
+    print(f"✅ Execution path: {result.get('execution_path', [])}")
 
     return {
         "answer": result.get("answer") or "⚠️ No answer generated",
