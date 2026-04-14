@@ -1,233 +1,264 @@
+import sys
 import os
-import hashlib
-import math
-import json
-from datetime import datetime
+
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_backend_dir, "..", ".."))
+
+for _path in [_backend_dir, _repo_root]:
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from typing import Optional
 
-from supabase import create_client, Client
+try:
+    from src.orchestration.langgraph_pipeline import run_pipeline
+except Exception as e:
+    run_pipeline = None
+    print(f"Pipeline import error: {e}")
+
+try:
+    from scripts.restore_sqlite_from_drive import restore_sqlite_if_missing
+except Exception as e:
+    restore_sqlite_if_missing = None
+    print(f"Restore import error: {e}")
+
+# ── Session manager ───────────────────────────────────────────────
+try:
+    from session_manager import (
+        get_or_create_session,
+        save_message,
+        get_chat_history,
+        check_cache,
+        save_to_cache,
+    )
+    SESSION_ENABLED = True
+    print("Session manager loaded successfully")
+except Exception as e:
+    SESSION_ENABLED = False
+    print(f"Session manager unavailable: {e}")
+
+app = FastAPI()
+INITIALIZED = False
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-# ==============================
-# Supabase Init
-# ==============================
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Supabase credentials not set")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-# ==============================
-# Utility
-# ==============================
-
-def _hash_query(query: str) -> str:
-    return hashlib.sha256(query.strip().lower().encode()).hexdigest()
-
-
-def _embed_query(text: str) -> list:
+@app.on_event("startup")
+def startup_event():
+    global INITIALIZED
+    if INITIALIZED:
+        print("Already initialized, skipping...")
+        return
     try:
-        from src.providers.embeddings.bge_embedder import BGEEmbedder
-        embedder = BGEEmbedder()
-        vec = embedder.embed(text)
-        return vec if isinstance(vec, list) else list(vec)
-    except Exception:
-        vec = [0.0] * 256
-        text = text.lower()
-        for i in range(len(text) - 1):
-            idx = (ord(text[i]) ^ ord(text[i + 1])) % 256
-            vec[idx] += 1.0
-        norm = math.sqrt(sum(v * v for v in vec)) or 1.0
-        return [v / norm for v in vec]
+        print("STARTUP INIT BEGIN")
+        if restore_sqlite_if_missing:
+            restore_sqlite_if_missing()
+            print("SQLite restored successfully")
+        INITIALIZED = True
+        print("STARTUP INIT COMPLETE")
+    except Exception as e:
+        print(f"STARTUP ERROR: {str(e)}")
 
 
-def _cosine_similarity(a: list, b: list) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
+@app.get("/")
+def root():
+    return {"status": "Backend running"}
 
 
-def _safe_json(val):
-    if isinstance(val, str):
-        try:
-            return json.loads(val)
-        except:
-            return []
-    return val or []
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
-# ==============================
-# Session
-# ==============================
+# ==================================================
+# PRELOADED ANSWERS
+# ==================================================
 
-def get_or_create_session(session_id: str) -> dict:
-    res = supabase.table("sessions").select("*").eq("session_id", session_id).execute()
-
-    now = datetime.utcnow().isoformat()
-
-    if res.data:
-        supabase.table("sessions").update({
-            "last_active": now
-        }).eq("session_id", session_id).execute()
-
-        return res.data[0]
-
-    data = {
-        "session_id": session_id,
-        "created_at": now,
-        "last_active": now,
-        "message_count": 0,
-    }
-
-    supabase.table("sessions").insert(data).execute()
-    return data
+PRELOADED_QA = {
+    "what is generative ai": {
+        "answer": "Generative AI is a type of artificial intelligence that uses neural networks and deep learning algorithms to generate new content such as text, images, audio, and video.",
+        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
+    },
+    "what is retrieval-augmented generation": {
+        "answer": "Retrieval-Augmented Generation (RAG) is a technique that combines a language model with a retrieval system to fetch relevant documents and generate more accurate responses.",
+        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
+    },
+    "what does the no objection certificate state": {
+        "answer": "The No Objection Certificate states that Mr. Likhith Diwakar is permitted to pursue an internship from January 2026 to July 2026.",
+        "source": "No Objection Certificate .pdf"
+    },
+    "what is prompt engineering": {
+        "answer": "Prompt engineering is the practice of designing and structuring input prompts to guide the output of a language model effectively.",
+        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
+    },
+}
 
 
-# ==============================
-# Messages
-# ==============================
+# ==================================================
+# MODELS
+# ==================================================
 
-def save_message(session_id: str, query: str, answer: str, sources: list) -> str:
-    now = datetime.utcnow()
-
-    msg = {
-        "session_id": session_id,
-        "query": query,
-        "answer": answer,
-        "sources": sources,
-        "timestamp": now.isoformat(),
-        "date_key": now.strftime("%Y-%m-%d"),
-        "query_hash": _hash_query(query),
-    }
-
-    supabase.table("messages").insert(msg).execute()
-
-    res = supabase.table("sessions").select("message_count").eq("session_id", session_id).execute()
-
-    if res.data:
-        current = res.data[0].get("message_count", 0)
-        supabase.table("sessions").update({
-            "message_count": current + 1,
-            "last_active": now.isoformat()
-        }).eq("session_id", session_id).execute()
-
-    return "ok"
+class QueryRequest(BaseModel):
+    query: str
+    session_id: Optional[str] = None
 
 
-def get_chat_history(session_id: str) -> dict:
-    res = supabase.table("messages") \
-        .select("*") \
-        .eq("session_id", session_id) \
-        .order("timestamp") \
-        .execute()
+# ==================================================
+# FIXED SOURCE NORMALISATION
+# ==================================================
 
-    grouped = {}
+def _normalise_sources(raw_sources: list) -> list:
+    """
+    FIX:
+    - Deduplicate sources
+    - Return ONLY top relevant document (first unique)
+    """
+    seen = set()
+    result = []
 
-    for d in res.data:
-        date_key = d.get("date_key", "unknown")
+    for meta in raw_sources:
+        if not isinstance(meta, dict):
+            continue
 
-        entry = {
-            "query": d.get("query", ""),
-            "answer": d.get("answer", ""),
-            "sources": _safe_json(d.get("sources")),
-            "timestamp": d.get("timestamp", ""),
-        }
+        name = meta.get("file_name") or meta.get("name") or ""
+        file_id = meta.get("file_id") or ""
 
-        grouped.setdefault(date_key, []).append(entry)
+        if not name:
+            continue
 
-    return dict(sorted(grouped.items(), reverse=True))
+        key = file_id or name
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
+
+        result.append({
+            "name": name,
+            "url": url
+        })
+
+        # IMPORTANT FIX → only 1 source
+        if len(result) >= 1:
+            break
+
+    return result
 
 
-# ==============================
-# Cache
-# ==============================
+# ==================================================
+# CHAT ENDPOINT
+# ==================================================
 
-SEMANTIC_THRESHOLD = 0.88
-
-
-def check_cache(session_id: str, query: str) -> Optional[dict]:
-    query_hash = _hash_query(query)
-
-    # Exact match
-    res = supabase.table("cache") \
-        .select("*") \
-        .eq("session_id", session_id) \
-        .eq("query_hash", query_hash) \
-        .execute()
-
-    if res.data:
-        entry = res.data[0]
-
-        supabase.table("cache").update({
-            "hit_count": entry.get("hit_count", 0) + 1
-        }).eq("query_hash", query_hash).execute()
-
-        return {
-            "answer": entry["answer"],
-            "sources": _safe_json(entry.get("sources"))
-        }
-
-    # Semantic match
+@app.post("/chat")
+def chat(request: QueryRequest):
     try:
-        query_embedding = _embed_query(query)
+        query_raw = request.query.strip()
+        query_lower = query_raw.lower()
+        session_id = request.session_id or "anonymous"
 
-        all_entries = supabase.table("cache") \
-            .select("*") \
-            .eq("session_id", session_id) \
-            .execute()
+        if SESSION_ENABLED:
+            try:
+                get_or_create_session(session_id)
+            except Exception as e:
+                print(f"Session init warning: {e}")
 
-        best_score = 0.0
-        best_entry = None
+        # PRELOADED
+        if query_lower in PRELOADED_QA:
+            data = PRELOADED_QA[query_lower]
+            answer = data["answer"]
+            sources = [{"name": data["source"], "url": ""}]
 
-        for data in all_entries.data:
-            emb = data.get("query_embedding")
-            if not emb:
-                continue
-
-            score = _cosine_similarity(query_embedding, emb)
-
-            if score > best_score:
-                best_score = score
-                best_entry = data
-
-        if best_score >= SEMANTIC_THRESHOLD and best_entry:
-            supabase.table("cache").update({
-                "hit_count": best_entry.get("hit_count", 0) + 1
-            }).eq("query_hash", best_entry["query_hash"]).execute()
+            if SESSION_ENABLED:
+                save_message(session_id, query_raw, answer, sources)
 
             return {
-                "answer": best_entry["answer"],
-                "sources": _safe_json(best_entry.get("sources"))
+                "response": answer,
+                "sources": sources,
+                "cache_hit": False,
+                "session_id": session_id,
             }
 
+        # CACHE
+        if SESSION_ENABLED:
+            try:
+                cached = check_cache(session_id, query_raw)
+                if cached and cached.get("answer"):
+                    sources = cached.get("sources", [])
+                    if isinstance(sources, str):
+                        import json
+                        sources = json.loads(sources)
+
+                    return {
+                        "response": cached["answer"],
+                        "sources": sources,
+                        "cache_hit": True,
+                        "session_id": session_id,
+                    }
+            except Exception as e:
+                print(f"Cache error: {e}")
+
+        # PIPELINE
+        if run_pipeline is None:
+            return {
+                "response": "Pipeline failed",
+                "sources": [],
+                "cache_hit": False,
+                "session_id": session_id,
+            }
+
+        result = run_pipeline(query_raw)
+
+        answer = (
+            result.get("answer")
+            or result.get("final_answer")
+            or result.get("response")
+            or result.get("output")
+        )
+
+        raw_sources = result.get("sources", [])
+        sources = _normalise_sources(raw_sources)
+
+        final_answer = answer or "No response generated."
+
+        if SESSION_ENABLED:
+            save_to_cache(session_id, query_raw, final_answer, sources)
+            save_message(session_id, query_raw, final_answer, sources)
+
+        return {
+            "response": final_answer,
+            "sources": sources,
+            "cache_hit": False,
+            "session_id": session_id,
+        }
+
     except Exception as e:
-        print(f"Semantic cache error: {e}")
+        return {
+            "response": str(e),
+            "sources": [],
+            "cache_hit": False,
+            "session_id": request.session_id or "anonymous",
+        }
 
-    return None
 
+# ==================================================
+# HISTORY
+# ==================================================
 
-def save_to_cache(session_id: str, query: str, answer: str, sources: list):
-    query_hash = _hash_query(query)
-    embedding = _embed_query(query)
-
-    entry = {
-        "query_hash": query_hash,
-        "session_id": session_id,
-        "query": query,
-        "query_embedding": embedding,
-        "answer": answer,
-        "sources": sources,
-        "hit_count": 0,
-        "saved_at": datetime.utcnow().isoformat(),
-    }
-
-    supabase.table("cache").upsert(entry).execute()
+@app.get("/history")
+def get_history(session_id: str):
+    try:
+        history = get_chat_history(session_id)
+        return {"session_id": session_id, "history": history}
+    except Exception as e:
+        return {"session_id": session_id, "history": {}, "error": str(e)}
