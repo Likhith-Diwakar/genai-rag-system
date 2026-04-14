@@ -125,19 +125,16 @@ class QueryRequest(BaseModel):
 
 
 # ==================================================
-# HELPER — normalise sources from pipeline output
+# HELPER — return only the top (most relevant) source
 # ==================================================
 
 def _normalise_sources(raw_sources: list) -> list:
     """
     Pipeline returns retrieved_metas — a list of dicts with keys like
-    file_id, file_name, chunk_id, etc.
-    We convert ALL of them (not just [0]) into the shape the frontend expects:
-        [{"name": "...", "url": "..."}, ...]
-    Duplicates (same file_id) are deduplicated, preserving order.
+    file_id, file_name, chunk_id, etc., ranked by relevance.
+    We return only the FIRST valid source (most relevant) in the shape
+    the frontend expects: [{"name": "...", "url": "..."}]
     """
-    seen = set()
-    result = []
     for meta in raw_sources:
         if not isinstance(meta, dict):
             continue
@@ -145,13 +142,9 @@ def _normalise_sources(raw_sources: list) -> list:
         file_id = meta.get("file_id") or ""
         if not name:
             continue
-        dedup_key = file_id or name
-        if dedup_key in seen:
-            continue
-        seen.add(dedup_key)
         url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
-        result.append({"name": name, "url": url})
-    return result
+        return [{"name": name, "url": url}]  # Return only the top source
+    return []
 
 
 # ==================================================
@@ -202,12 +195,17 @@ def chat(request: QueryRequest):
                 if cached and cached.get("answer"):
                     print(f"Cache hit for session={session_id} query='{query_raw[:60]}'")
                     sources = cached.get("sources", [])
+
                     if isinstance(sources, str):
                         import json
                         try:
                             sources = json.loads(sources)
                         except:
                             sources = []
+
+                    # FORCE SINGLE SOURCE — old cache entries may have multiple
+                    if isinstance(sources, list) and len(sources) > 1:
+                        sources = [sources[0]]
 
                     return {
                         "response": cached["answer"],
@@ -258,7 +256,7 @@ def chat(request: QueryRequest):
                     "session_id": session_id,
                 }
 
-            # ── FIX: normalise ALL sources, not just [0] ──────────────────
+            # ── Return only the top (most relevant) source ─────────────────
             raw_sources = result.get("sources", [])
             sources = _normalise_sources(raw_sources)
 
