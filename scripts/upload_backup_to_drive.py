@@ -19,12 +19,11 @@ if PROJECT_ROOT not in sys.path:
 from src.utils.auth import get_credentials
 
 # --------------------------------------------------
-# ENV (NO HARDCODING)
+# ENV VARIABLES
 # --------------------------------------------------
 
 SQLITE_FOLDER_ID = os.getenv("SQLITE_FOLDER_ID")
 QDRANT_FOLDER_ID = os.getenv("QDRANT_FOLDER_ID")
-
 
 # --------------------------------------------------
 # FIND EXISTING FILE
@@ -45,7 +44,7 @@ def find_existing_file(service, folder_id, filename):
 
 
 # --------------------------------------------------
-# UPLOAD / UPDATE BACKUP
+# UPLOAD / UPDATE BACKUP (MAIN FUNCTION)
 # --------------------------------------------------
 
 def upload_backup(file_path: str, backup_type: str):
@@ -53,8 +52,9 @@ def upload_backup(file_path: str, backup_type: str):
     if not os.path.exists(file_path):
         raise FileNotFoundError("Backup file not found.")
 
-    # IMPORTANT: Use OAuth (not service account)
-    creds = get_credentials(force_oauth=True)
+    # ✅ Use service account / CI-safe credentials
+    creds = get_credentials()
+
     service = build("drive", "v3", credentials=creds)
 
     filename = os.path.basename(file_path)
@@ -98,7 +98,7 @@ def upload_backup(file_path: str, backup_type: str):
     existing_file = find_existing_file(service, folder_id, filename)
 
     if existing_file:
-        # UPDATE (overwrite existing file)
+        # 🔁 UPDATE existing file
         service.files().update(
             fileId=existing_file["id"],
             media_body=media,
@@ -108,7 +108,7 @@ def upload_backup(file_path: str, backup_type: str):
         print(f"Updated existing backup: {filename}")
 
     else:
-        # CREATE new file
+        # ➕ CREATE new file
         file = service.files().create(
             body=file_metadata,
             media_body=media,
