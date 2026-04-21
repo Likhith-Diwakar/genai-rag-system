@@ -403,10 +403,10 @@ def run_pipeline(query: str) -> dict:
         config={"recursion_limit": 50}
     )
 
-    print(f"✅ Execution path: {result.get('execution_path', [])}")
+    print(f" Execution path: {result.get('execution_path', [])}")
 
     return {
-        "answer": result.get("answer") or "⚠️ No answer generated",
+        "answer": result.get("answer") or " No answer generated",
         "execution_path": result.get("execution_path", []),
         "confidence": float(result.get("confidence", 0.0)),
         "grounding_score": float(result.get("grounding_score", 0.0)),

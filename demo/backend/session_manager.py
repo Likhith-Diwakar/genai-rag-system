@@ -1,3 +1,4 @@
+#Session Manager.py
 import os
 import hashlib
 import math

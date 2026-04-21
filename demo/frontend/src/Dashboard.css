@@ -1,0 +1,463 @@
+/* ================================================================
+   DASHBOARD  — EY KnowledgeVerse styles
+   Imported only by Dashboard.js — does not affect LandingPage
+   ================================================================ */
+
+/* ── Root layout ──────────────────────────────────────────────────── */
+.db-root {
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ── Navbar ───────────────────────────────────────────────────────── */
+.db-navbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 32px;
+  height: 64px;
+  background: rgba(6, 8, 16, 0.85);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+
+.db-navbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.db-ey-logo-img {
+  height: 34px;          /* 🔥 controls size */
+  width: auto;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
+
+.db-product-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.db-navbar-center {
+  flex: 1;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.db-navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.db-session-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.db-session-id {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: default;
+}
+
+/* ── Search Bar ───────────────────────────────────────────────────── */
+.db-searchbar-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.db-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 14px;
+  height: 40px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.db-searchbar:focus-within {
+  border-color: rgba(79, 142, 255, 0.4);
+  box-shadow: 0 0 0 3px rgba(79, 142, 255, 0.06);
+}
+
+.db-search-icon {
+  font-size: 13px;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+
+.db-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 300;
+}
+
+.db-search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.db-search-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.db-search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border-hover);
+  border-radius: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  z-index: 200;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.db-search-result {
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.db-search-result-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: 7px;
+  transition: background 0.15s ease;
+}
+
+.db-search-result-link:hover {
+  background: var(--surface2);
+}
+
+.db-search-result-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.db-search-result-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-search-result-arrow {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.db-search-no-result {
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ── Main content ─────────────────────────────────────────────────── */
+.db-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+
+.db-page-header {
+  margin-bottom: 36px;
+}
+
+.db-page-title {
+  font-family: var(--font-display);
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.db-session-display {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.75em;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  vertical-align: middle;
+}
+
+.db-page-subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 300;
+}
+
+/* ── Card grid ────────────────────────────────────────────────────── */
+.db-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+@media (max-width: 960px) {
+  .db-card-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .db-card-grid {
+    grid-template-columns: 1fr;
+  }
+  .db-navbar {
+    padding: 0 16px;
+  }
+  .db-main {
+    padding: 24px 16px 80px;
+  }
+}
+
+/* ── Card ─────────────────────────────────────────────────────────── */
+.db-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 340px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.db-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+.db-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-card-icon {
+  font-size: 18px;
+  line-height: 1;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.db-card-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0 0 2px;
+}
+
+.db-card-subtitle {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin: 0;
+  font-weight: 300;
+}
+
+.db-card-body {
+  flex: 1;
+  padding: 8px 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface3) transparent;
+}
+
+.db-card-body::-webkit-scrollbar { width: 3px; }
+.db-card-body::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 4px; }
+
+.db-card-loading,
+.db-card-empty {
+  padding: 24px 20px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ── Doc row (Latest + Frequently visited) ────────────────────────── */
+.db-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  text-decoration: none;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.db-doc-row:last-child {
+  border-bottom: none;
+}
+
+.db-doc-row:hover {
+  background: var(--surface2);
+}
+
+.db-doc-row-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.db-doc-row-name {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-doc-row-arrow {
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.db-doc-row:hover .db-doc-row-arrow {
+  opacity: 1;
+}
+
+/* Rank badge (Frequently visited) */
+.db-doc-rank {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  min-width: 20px;
+  flex-shrink: 0;
+}
+
+.db-doc-freq-badge {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--accent-glow);
+  border: 1px solid rgba(79, 142, 255, 0.2);
+  color: var(--accent);
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+/* ── Activity rows ────────────────────────────────────────────────── */
+.db-activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-activity-row:last-child {
+  border-bottom: none;
+}
+
+.db-activity-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.db-activity-query {
+  font-size: 12.5px;
+  color: var(--text);
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.db-activity-source {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Landing page dashboard link button ─────────────────────────────
+   Added to LandingPage — minimal pill linking to /dashboard          */
+.dashboard-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border-hover);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 400;
+  padding: 8px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 12px;
+}
+
+.dashboard-link-btn:hover {
+  background: var(--surface3);
+  color: var(--text);
+  border-color: rgba(79, 142, 255, 0.3);
+}
