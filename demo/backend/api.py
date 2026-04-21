@@ -84,9 +84,6 @@ def health():
     return {"status": "ok"}
 
 
-# ==================================================
-# ✅ PRELOADED ANSWERS (MENTOR REQUIREMENT)
-# ==================================================
 
 PRELOADED_QA = {
     "what is generative ai": {
@@ -304,7 +301,7 @@ def get_history(session_id: str):
 
 
 # ==================================================
-# ✅ NEW: TRACK CLICK ENDPOINT
+ TRACK CLICK ENDPOINT
 # POST /track_click
 # Called silently when user clicks a source document
 # ==================================================
@@ -487,7 +484,7 @@ def get_documents(limit: int = 10):
 
 
 # ==================================================
-# ✅ UPDATED: FREQUENT DOCS ENDPOINT
+#  UPDATED: FREQUENT DOCS ENDPOINT
 # GET /frequent_docs?session_id=<sid>
 # Primary:      click_store  (explicit opens via /track_click)
 # Supplementary: session chat history (so docs appear even before first click)
