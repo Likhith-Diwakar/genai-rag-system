@@ -108,6 +108,12 @@ class ClickPayload(BaseModel):
     url:        str = ""
 
 
+class TrackDocumentPayload(BaseModel):
+    session_id: str
+    file_name:  str
+    file_url:   str
+
+
 # ==================================================
 # HELPER — return only the top (most relevant) source
 # ==================================================
@@ -239,7 +245,7 @@ def chat(request: QueryRequest):
 
 
 # ==================================================
-# HISTORY ENDPOINT  (session-specific — used by ChatOverlay)
+# HISTORY ENDPOINT
 # GET /history?session_id=<sid>
 # ==================================================
 
@@ -287,98 +293,218 @@ def track_click(payload: ClickPayload):
 
 
 # ==================================================
+# TRACK DOCUMENT ENDPOINT
+# POST /track-document
+# ==================================================
+
+@app.post("/track-document")
+def track_document(payload: TrackDocumentPayload):
+    if not payload.session_id or not payload.file_name:
+        return {"status": "ignored"}
+
+    if SESSION_ENABLED:
+        try:
+            from session_manager import supabase
+            from datetime import datetime
+
+            now = datetime.utcnow()
+
+            supabase.table("messages").insert({
+                "session_id": payload.session_id,
+                "query":      f"[document access] {payload.file_name}",
+                "answer":     "",
+                "sources":    [{"name": payload.file_name, "url": payload.file_url}],
+                "timestamp":  now.isoformat(),
+                "date_key":   now.strftime("%Y-%m-%d"),
+                "query_hash": f"doc_access_{payload.file_name}_{now.timestamp()}",
+            }).execute()
+
+        except Exception as e:
+            print(f"[track-document] Supabase insert error: {e}")
+            return {"status": "error", "detail": str(e)}
+
+    print(f"[track-document] session={payload.session_id} file={payload.file_name}")
+    return {"status": "tracked"}
+
+
+# ==================================================
 # SEARCH DOCS ENDPOINT
 # GET /search_docs?q=<query>
+#
+# Uses the SAME path resolution as TrackerDB (DATA_DIR env var)
+# so the DB is always found regardless of where uvicorn is launched.
+#
+# If TRACKER_ENABLED, we reuse the already-open TrackerDB connection
+# directly — no second sqlite3.connect() needed.
 # ==================================================
 
 import sqlite3
+from pathlib import Path
 
-_TRACKER_DB = os.path.join(_repo_root, "data", "tracker.db")
 
-
-def _get_tracker_connection():
-    if not os.path.exists(_TRACKER_DB):
-        fallback = os.path.join(_backend_dir, "data", "tracker.db")
-        if os.path.exists(fallback):
-            return sqlite3.connect(fallback)
-        return None
-    return sqlite3.connect(_TRACKER_DB)
+def _get_tracker_db_path() -> str:
+    """
+    Mirrors exactly how tracker_db.py resolves DB_PATH:
+        Path(os.getenv("DATA_DIR", "data")) / "tracker.db"
+    This guarantees api.py and TrackerDB always open the same file.
+    """
+    base = os.getenv("DATA_DIR", "data")
+    return str(Path(base) / "tracker.db")
 
 
 @app.get("/search_docs")
 def search_docs(q: str = ""):
+    """
+    Returns up to 5 files whose file_name contains the query string
+    (case-insensitive).
+
+    Primary path: reuse the TrackerDB connection already held by
+    _tracker (avoids opening a second handle to the same WAL file).
+
+    Fallback: open a fresh connection using the same DATA_DIR path.
+    """
     if not q.strip():
         return []
 
-    conn = _get_tracker_connection()
-    if conn is None:
+    # ── Strategy 1: reuse existing TrackerDB connection ─────────────
+    # This is the safest option — same connection, same WAL state.
+    if TRACKER_ENABLED and _tracker is not None:
+        try:
+            rows = _tracker.conn.execute(
+                """
+                SELECT file_id, file_name
+                FROM   files
+                WHERE  LOWER(file_name) LIKE ?
+                ORDER  BY file_name ASC
+                LIMIT  5
+                """,
+                (f"%{q.lower()}%",)
+            ).fetchall()
+
+            results = []
+            for file_id, file_name in rows:
+                url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
+                results.append({"file_name": file_name, "file_id": file_id, "url": url})
+
+            print(f"[search_docs] (via TrackerDB) '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
+            return results
+
+        except Exception as e:
+            print(f"[search_docs] TrackerDB query failed, falling back to fresh connection: {e}")
+
+    # ── Strategy 2: fresh connection using DATA_DIR path ────────────
+    db_path = _get_tracker_db_path()
+    print(f"[search_docs] Opening fresh connection at: {db_path}")
+
+    if not os.path.exists(db_path):
+        print(f"[search_docs] CRITICAL: tracker.db not found at {db_path}")
+        print(f"[search_docs] CWD={os.getcwd()}  DATA_DIR={os.getenv('DATA_DIR', 'data')}")
         return []
 
+    conn = None
     try:
-        conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
         tables = [row[0] for row in cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()]
+        print(f"[search_docs] Tables in DB: {tables}")
 
-        target_table = None
-        for t in ["files", "documents", "tracker", "indexed_files"]:
-            if t in tables:
-                target_table = t
-                break
-
-        if target_table is None:
-            return []
-
-        cols     = [row[1] for row in cursor.execute(f"PRAGMA table_info({target_table})").fetchall()]
-        name_col = next((c for c in cols if "name" in c.lower() or "file" in c.lower()), cols[0] if cols else None)
-        id_col   = next((c for c in cols if "id" in c.lower() and "file" in c.lower()), None)
-        if id_col is None:
-            id_col = next((c for c in cols if "id" in c.lower()), None)
-
-        if name_col is None:
+        if "files" not in tables:
+            print("[search_docs] `files` table not found — ingestion may not have run yet")
             return []
 
         rows = cursor.execute(
-            f"SELECT * FROM {target_table} WHERE LOWER({name_col}) LIKE ? LIMIT 20",
+            """
+            SELECT file_id, file_name
+            FROM   files
+            WHERE  LOWER(file_name) LIKE ?
+            ORDER  BY file_name ASC
+            LIMIT  5
+            """,
             (f"%{q.lower()}%",)
         ).fetchall()
 
         results = []
-        for row in rows:
-            row_dict  = dict(row)
-            file_name = row_dict.get(name_col, "")
-            file_id   = row_dict.get(id_col, "") if id_col else ""
+        for file_id, file_name in rows:
             url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
             results.append({"file_name": file_name, "file_id": file_id, "url": url})
 
+        print(f"[search_docs] (fresh conn) '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
         return results
 
     except Exception as e:
-        print(f"/search_docs error: {e}")
+        print(f"[search_docs] Exception: {e}")
         return []
     finally:
+        if conn:
+            conn.close()
+
+
+# ==================================================
+# DEBUG ENDPOINT — remove after confirming search works
+# GET /debug-db
+# Prints DB path, tables, and all rows in `files` table.
+# Hit this in your browser to confirm the DB is reachable.
+# ==================================================
+
+@app.get("/debug-db")
+def debug_db():
+    """
+    Diagnostic endpoint. Returns:
+    - resolved DB path
+    - whether the file exists
+    - all table names
+    - all rows in the `files` table (file_id, file_name)
+
+    Remove this endpoint once search is confirmed working.
+    """
+    info = {
+        "cwd":              os.getcwd(),
+        "DATA_DIR_env":     os.getenv("DATA_DIR", "data"),
+        "db_path":          _get_tracker_db_path(),
+        "db_exists":        os.path.exists(_get_tracker_db_path()),
+        "tracker_enabled":  TRACKER_ENABLED,
+        "tables":           [],
+        "files_rows":       [],
+        "error":            None,
+    }
+
+    if not info["db_exists"]:
+        # Also try to list the data directory for extra context
+        data_dir = os.getenv("DATA_DIR", "data")
+        if os.path.isdir(data_dir):
+            info["data_dir_contents"] = os.listdir(data_dir)
+        else:
+            info["data_dir_contents"] = f"directory '{data_dir}' does not exist"
+        return info
+
+    try:
+        conn = sqlite3.connect(info["db_path"])
+        cursor = conn.cursor()
+        info["tables"] = [row[0] for row in cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+
+        if "files" in info["tables"]:
+            rows = cursor.execute("SELECT file_id, file_name FROM files").fetchall()
+            info["files_rows"] = [{"file_id": r[0], "file_name": r[1]} for r in rows]
+
         conn.close()
+    except Exception as e:
+        info["error"] = str(e)
+
+    return info
 
 
 # ==================================================
 # LATEST DOCUMENTS ENDPOINT
 # GET /latest-documents
-# Global — top 5 most recently ingested files.
-# Sourced from latest_documents table in SQLite.
-# Written by ingestion pipeline (main.py).
-# No session filter — shared across all users.
 # ==================================================
 
 @app.get("/latest-documents")
 def get_latest_documents():
-    """
-    Returns the 5 most recently ingested documents globally.
-    Data is written by the ingestion pipeline (src/ingestion/main.py)
-    whenever a new file is detected from Google Drive.
-    This endpoint is session-independent — same for all users.
-    """
     if not TRACKER_ENABLED or _tracker is None:
         return []
     try:
@@ -392,7 +518,6 @@ def get_latest_documents():
 # ==================================================
 # FREQUENT DOCS ENDPOINT
 # GET /frequent_docs
-# Global — across ALL users/sessions
 # ==================================================
 
 @app.get("/frequent_docs")
@@ -410,7 +535,8 @@ def get_frequent_docs():
 # ==================================================
 # RECENT ACTIVITY ENDPOINT
 # GET /recent_activity
-# Global — across ALL users/sessions
+# Returns up to 5 real queries (frontend filters [document access] rows).
+# Fetches 10 from Supabase as buffer so we always have 5 real ones.
 # ==================================================
 
 @app.get("/recent_activity")
@@ -418,7 +544,7 @@ def get_recent_activity():
     if not SESSION_ENABLED:
         return {"activity": []}
     try:
-        activity = get_all_recent_activity(limit=20)
+        activity = get_all_recent_activity(limit=10)
         return {"activity": activity}
     except Exception as e:
         print(f"/recent_activity error: {e}")

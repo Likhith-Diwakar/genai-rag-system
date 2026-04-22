@@ -41,7 +41,7 @@ class TrackerDB:
                 )
             """)
 
-            # ── NEW: Latest Documents table ──────────────────────────────
+            # ── Latest Documents table ───────────────────────────────────
             # Stores the top 5 most recently ingested files globally.
             # Used by the Dashboard 'Latest Documents' card.
             # No session_id — global across all users.
@@ -58,7 +58,7 @@ class TrackerDB:
             self.conn.commit()
 
     # ──────────────────────────────────────────────────────────────
-    # Existing methods (unchanged)
+    # files table methods
     # ──────────────────────────────────────────────────────────────
 
     def is_ingested(self, file_id: str) -> bool:
@@ -103,20 +103,17 @@ class TrackerDB:
         self.conn.close()
 
     # ──────────────────────────────────────────────────────────────
-    # NEW: Latest Documents methods
+    # latest_documents table methods
     # ──────────────────────────────────────────────────────────────
 
     def add_latest_document(self, file_id: str, file_name: str, file_url: str):
         """
         Insert a newly ingested file into latest_documents.
         - Skips if file_id already exists (no duplicates).
-        - After insert, keeps only the 5 most recent rows and
-          deletes the rest.
-        Called from ingestion pipeline (main.py) when a new file
-        is detected.
+        - After insert, keeps only the 5 most recent rows.
+        Called from ingestion pipeline (main.py) on new file detection.
         """
         with self._lock:
-            # INSERT OR IGNORE prevents duplicates on file_id
             self.conn.execute(
                 """
                 INSERT OR IGNORE INTO latest_documents (file_id, file_name, file_url)
@@ -125,7 +122,7 @@ class TrackerDB:
                 (file_id, file_name, file_url)
             )
 
-            # Keep only the top 5 newest rows — delete the rest
+            # Keep only the top 5 newest rows — prune the rest
             self.conn.execute(
                 """
                 DELETE FROM latest_documents

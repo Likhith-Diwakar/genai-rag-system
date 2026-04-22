@@ -47,7 +47,8 @@ const IconHistoryCard = () => (
 );
 
 // ── Search Bar ────────────────────────────────────────────────────────────────
-function SearchBar() {
+// Receives sessionId so clicks can be tracked against the current user.
+function SearchBar({ sessionId }) {
   const [query, setQuery]     = useState("");
   const [results, setResults] = useState([]);
   const [open, setOpen]       = useState(false);
@@ -55,6 +56,7 @@ function SearchBar() {
   const debouncedQuery        = useDebounce(query, 300);
   const wrapperRef            = useRef(null);
 
+  // Fetch suggestions whenever debounced query changes
   useEffect(() => {
     if (!debouncedQuery.trim()) {
       setResults([]);
@@ -72,6 +74,7 @@ function SearchBar() {
       .finally(() => setLoading(false));
   }, [debouncedQuery]);
 
+  // Close dropdown when clicking outside
   useEffect(() => {
     const handler = (e) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target))
@@ -81,6 +84,33 @@ function SearchBar() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // ── Handle suggestion click ──────────────────────────────────────
+  const handleDocClick = (doc) => {
+    // 1. Open document in new tab
+    window.open(doc.url, "_blank", "noopener,noreferrer");
+
+    // 2. POST to /track-document → writes to messages table →
+    //    get_all_frequent_docs() will count it on next poll
+    fetch(`${BACKEND_URL}/track-document`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        file_name:  doc.file_name,
+        file_url:   doc.url,
+      }),
+    })
+      .then(() => {
+        // 3. Fire event so FrequentDocsCard refreshes immediately
+        window.dispatchEvent(new Event("doc_clicked"));
+      })
+      .catch((err) => console.warn("[track-document]", err));
+
+    // 4. Close and clear
+    setOpen(false);
+    setQuery("");
+  };
+
   return (
     <div className="db-searchbar-wrapper" ref={wrapperRef}>
       <div className="db-searchbar">
@@ -88,7 +118,7 @@ function SearchBar() {
         <input
           className="db-search-input"
           type="text"
-          placeholder="Search documents by name, heading, or topic…"
+          placeholder="Search documents by name…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
@@ -96,26 +126,25 @@ function SearchBar() {
         {loading && <span className="db-search-spinner" />}
       </div>
 
+      {/* Dropdown — results */}
       {open && results.length > 0 && (
         <ul className="db-search-dropdown">
           {results.map((doc, i) => (
             <li key={i} className="db-search-result">
-              <a
-                href={doc.url}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
                 className="db-search-result-link"
-                onClick={() => setOpen(false)}
+                onClick={() => handleDocClick(doc)}
               >
                 <span className="db-search-result-icon">📄</span>
                 <span className="db-search-result-name">{doc.file_name}</span>
                 <span className="db-search-result-arrow">↗</span>
-              </a>
+              </button>
             </li>
           ))}
         </ul>
       )}
 
+      {/* Dropdown — empty state */}
       {open && results.length === 0 && !loading && query.trim() && (
         <ul className="db-search-dropdown">
           <li className="db-search-no-result">No documents found for "{query}"</li>
@@ -126,10 +155,8 @@ function SearchBar() {
 }
 
 // ── Card: Latest Documents ────────────────────────────────────────────────────
-// Global — top 5 most recently ingested files from Google Drive.
-// Written by GitHub Actions ingestion pipeline into SQLite latest_documents table.
-// Polls every 15s so new ingestions appear automatically.
-// No session filter — same data for all users.
+// Global — top 5 most recently ingested files.
+// Polls every 15s to pick up new GitHub Actions ingestions automatically.
 function LatestDocumentsCard() {
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -142,12 +169,8 @@ function LatestDocumentsCard() {
       .finally(() => setLoading(false));
   };
 
-  // Initial load
-  useEffect(() => {
-    fetchDocs();
-  }, []);
+  useEffect(() => { fetchDocs(); }, []);
 
-  // Poll every 15 seconds — picks up new ingestions from GitHub Actions
   useEffect(() => {
     const interval = setInterval(fetchDocs, 15000);
     return () => clearInterval(interval);
@@ -187,7 +210,8 @@ function LatestDocumentsCard() {
 }
 
 // ── Card: Frequently Visited ──────────────────────────────────────────────────
-// Global — shows docs accessed by ALL users across ALL sessions
+// Global — top 5 docs accessed across ALL users.
+// Refreshes immediately when SearchBar fires "doc_clicked".
 function FrequentDocsCard() {
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -203,9 +227,7 @@ function FrequentDocsCard() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    fetchDocs();
-  }, []);
+  useEffect(() => { fetchDocs(); }, []);
 
   useEffect(() => {
     const handler = () => fetchDocs();
@@ -226,7 +248,7 @@ function FrequentDocsCard() {
         {loading && <div className="db-card-loading">Loading…</div>}
         {!loading && docs.length === 0 && (
           <div className="db-card-empty">
-            No activity yet — ask a question in chat to see sources here.
+            No activity yet — search or ask a question to see sources here.
           </div>
         )}
         {!loading && docs.map((doc, i) => (
@@ -251,7 +273,10 @@ function FrequentDocsCard() {
 }
 
 // ── Card: Recent Activity ─────────────────────────────────────────────────────
-// Global — shows queries from ALL users across ALL sessions
+// Global — shows the 5 most recent REAL queries across ALL users.
+// Synthetic "[document access]" rows (from search bar clicks) are filtered out.
+// Auto-polls every 10 seconds so new queries appear without page refresh.
+// Also refreshes instantly when the "query_sent" event fires from ChatOverlay.
 function ActivityCard() {
   const [queries, setQueries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -262,16 +287,27 @@ function ActivityCard() {
       .then((r) => r.json())
       .then((data) => {
         const activity = Array.isArray(data.activity) ? data.activity : [];
-        setQueries(activity.slice(0, 10));
+        const filtered = activity
+          // Remove synthetic search-bar click rows
+          .filter((m) => !m.query?.startsWith("[document access]"))
+          // Keep only the 5 most recent real queries
+          .slice(0, 5);
+        setQueries(filtered);
       })
       .catch(() => setQueries([]))
       .finally(() => setLoading(false));
   };
 
+  // Initial load
+  useEffect(() => { fetchActivity(); }, []);
+
+  // Auto-refresh every 10 seconds — new queries from any user appear automatically
   useEffect(() => {
-    fetchActivity();
+    const interval = setInterval(fetchActivity, 10000);
+    return () => clearInterval(interval);
   }, []);
 
+  // Instant refresh when ChatOverlay fires query_sent
   useEffect(() => {
     const handler = () => fetchActivity();
     window.addEventListener("query_sent", handler);
@@ -284,7 +320,7 @@ function ActivityCard() {
         <span className="db-card-icon"><IconHistoryCard /></span>
         <div>
           <h2 className="db-card-title">Recent Activity</h2>
-          <p className="db-card-subtitle">Latest queries across all users</p>
+          <p className="db-card-subtitle">Latest 5 queries across all users</p>
         </div>
       </div>
       <div className="db-card-body">
@@ -313,6 +349,7 @@ function ActivityCard() {
 }
 
 // ── Navbar ────────────────────────────────────────────────────────────────────
+// sessionId is passed to SearchBar so doc clicks are attributed correctly.
 function DashboardNavbar({ sessionId }) {
   const navigate = useNavigate();
   return (
@@ -328,7 +365,7 @@ function DashboardNavbar({ sessionId }) {
       </div>
 
       <div className="db-navbar-center">
-        <SearchBar />
+        <SearchBar sessionId={sessionId} />
       </div>
 
       <div className="db-navbar-right">
@@ -380,7 +417,6 @@ export default function Dashboard({ sessionId }) {
         </button>
       </div>
 
-      {/* Chat stays session-specific */}
       <ChatOverlay
         sessionId={sessionId}
         isOpen={chatOpen}
