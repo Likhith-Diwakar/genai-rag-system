@@ -15,3 +15,4 @@ def extract_docx_text(file_path: str) -> str:
 
     logger.info(f"Extracted {len(paragraphs)} paragraphs from DOCX")
     return text
+

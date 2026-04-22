@@ -84,39 +84,6 @@ def health():
     return {"status": "ok"}
 
 
-
-PRELOADED_QA = {
-    "what is generative ai": {
-        "answer": "Generative AI is a type of artificial intelligence that uses neural networks and deep learning algorithms to generate new content such as text, images, audio, and video.",
-        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
-    },
-    "what is retrieval-augmented generation": {
-        "answer": "Retrieval-Augmented Generation (RAG) is a technique that combines a language model with a retrieval system to fetch relevant documents and generate more accurate responses.",
-        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
-    },
-    "what does the no objection certificate state": {
-        "answer": "The No Objection Certificate states that Mr. Likhith Diwakar is permitted to pursue an internship from January 2026 to July 2026.",
-        "source": "No Objection Certificate .pdf"
-    },
-    "what is prompt engineering": {
-        "answer": "Prompt engineering is the practice of designing and structuring input prompts to guide the output of a language model effectively.",
-        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
-    },
-    "what is zero-shot prompting": {
-        "answer": "Zero-shot prompting is when a model is asked to perform a task without any prior examples.",
-        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
-    },
-    "what is few-shot prompting": {
-        "answer": "Few-shot prompting involves providing a few examples to guide the model's response.",
-        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
-    },
-    "what is in-context learning": {
-        "answer": "In-context learning is when a model learns from examples provided within the prompt itself.",
-        "source": "Generative-AI-and-LLMs-for-Dummies.pdf"
-    }
-}
-
-
 # ==================================================
 # MODELS
 # ==================================================
@@ -158,7 +125,6 @@ def _normalise_sources(raw_sources: list) -> list:
 def chat(request: QueryRequest):
     try:
         query_raw = request.query.strip()
-        query_lower = query_raw.lower()
         session_id = request.session_id or "anonymous"
 
         if SESSION_ENABLED:
@@ -166,23 +132,6 @@ def chat(request: QueryRequest):
                 get_or_create_session(session_id)
             except Exception as e:
                 print(f"Session init warning: {e}")
-
-        # Preloaded response
-        if query_lower in PRELOADED_QA:
-            data = PRELOADED_QA[query_lower]
-            answer = data["answer"]
-            sources = [{"name": data["source"], "url": ""}]
-            if SESSION_ENABLED:
-                try:
-                    save_message(session_id, query_raw, answer, sources)
-                except Exception as e:
-                    print(f"Save message warning (preloaded): {e}")
-            return {
-                "response": answer,
-                "sources": sources,
-                "cache_hit": False,
-                "session_id": session_id,
-            }
 
         # Cache lookup
         if SESSION_ENABLED:
@@ -195,7 +144,7 @@ def chat(request: QueryRequest):
                         import json
                         try:
                             sources = json.loads(sources)
-                        except:
+                        except Exception:
                             sources = []
                     if isinstance(sources, list) and len(sources) > 1:
                         sources = [sources[0]]
@@ -301,7 +250,7 @@ def get_history(session_id: str):
 
 
 # ==================================================
- TRACK CLICK ENDPOINT
+# TRACK CLICK ENDPOINT
 # POST /track_click
 # Called silently when user clicks a source document
 # ==================================================
@@ -484,10 +433,10 @@ def get_documents(limit: int = 10):
 
 
 # ==================================================
-#  UPDATED: FREQUENT DOCS ENDPOINT
+# FREQUENT DOCS ENDPOINT
 # GET /frequent_docs?session_id=<sid>
-# Primary:      click_store  (explicit opens via /track_click)
-# Supplementary: session chat history (so docs appear even before first click)
+# Primary:       click_store (explicit opens via /track_click)
+# Supplementary: session chat history (fallback before first click)
 # Returns top 5 sorted by click count desc
 # ==================================================
 

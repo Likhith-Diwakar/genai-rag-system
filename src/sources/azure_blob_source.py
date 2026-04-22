@@ -57,3 +57,4 @@ class AzureBlobSource(BaseSource):
             return "text/csv"
         else:
             return "application/octet-stream"
+

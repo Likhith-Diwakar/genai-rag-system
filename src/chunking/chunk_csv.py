@@ -34,3 +34,4 @@ def chunk_csv_text(text: str, max_rows_per_chunk: int = 10):
     logger.info(f"Created {len(chunks)} CSV chunks")
 
     return chunks
+

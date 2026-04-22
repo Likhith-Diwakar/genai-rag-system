@@ -254,3 +254,4 @@ def save_to_cache(session_id: str, query: str, answer: str, sources: list):
     }
 
     supabase.table("cache").upsert(entry).execute()
+
