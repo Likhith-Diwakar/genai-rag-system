@@ -96,4 +96,4 @@ jobs:
       # ── Run pipeline ─────────────────────────────────────────────────────
       - name: Run Daily Pipeline
         run: |
-          python -u scripts/run_daily_sync.py
+          python -u scripts/run_daily_sync.py 
