@@ -1,83 +1,96 @@
-import os
-import sys
-import gzip
-import pickle
-import io
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+name: Daily RAG Pipeline
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 3:00 AM IST
+  workflow_dispatch:
 
-from src.utils.auth import get_credentials
+jobs:
+  run-sync:
+    runs-on: ubuntu-latest
 
-SQLITE_BACKUP_FOLDER_ID = os.getenv("SQLITE_BACKUP_FOLDER_ID")
+    steps:
+      # ── Checkout ─────────────────────────────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-DATA_DIR = os.getenv(
-    "DATA_DIR",
-    os.path.join(PROJECT_ROOT, "demo", "backend", "data")
-)
+      # ── Python setup ─────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-SQLITE_DB_PATH = os.path.join(DATA_DIR, "tracker.db")
+      # ── System dependencies ──────────────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
 
+      # ── Python dependencies ──────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --upgrade --force-reinstall google-genai
 
-def restore_sqlite():
-    if not SQLITE_BACKUP_FOLDER_ID:
-        print("[restore] SQLITE_BACKUP_FOLDER_ID not set — skipping restore.")
-        return None
+      # ── Verify Gemini SDK ────────────────────────────────
+      - name: Verify Gemini SDK
+        run: |
+          python - <<'EOF'
+          from google import genai
+          print("Google GenAI SDK loaded successfully")
+          EOF
 
-    print(f"[restore] Restoring to: {SQLITE_DB_PATH}")
+      # ── Environment variables ────────────────────────────
+      - name: Set environment variables
+        run: |
+          echo "QDRANT_URL=${{ secrets.QDRANT_URL }}" >> $GITHUB_ENV
+          echo "QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }}" >> $GITHUB_ENV
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> $GITHUB_ENV
+          echo "HF_API_TOKEN=${{ secrets.HF_API_TOKEN }}" >> $GITHUB_ENV
+          echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" >> $GITHUB_ENV
+          echo "SQLITE_FOLDER_ID=${{ secrets.SQLITE_FOLDER_ID }}" >> $GITHUB_ENV
+          echo "SQLITE_BACKUP_FOLDER_ID=${{ secrets.SQLITE_BACKUP_FOLDER_ID }}" >> $GITHUB_ENV
+          echo "QDRANT_FOLDER_ID=${{ secrets.QDRANT_FOLDER_ID }}" >> $GITHUB_ENV
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> $GITHUB_ENV
+          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_ENV
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> $GITHUB_ENV
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> $GITHUB_ENV
 
-    try:
-        creds = get_credentials()
-        service = build("drive", "v3", credentials=creds)
+      # ── Service account JSON (multiline safe) ────────────
+      - name: Set Google Service Account credentials
+        run: |
+          echo "GOOGLE_SERVICE_ACCOUNT_JSON<<EOF" >> $GITHUB_ENV
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
-        query = f"'{SQLITE_BACKUP_FOLDER_ID}' in parents and trashed=false"
+      # ── Verify auth ──────────────────────────────────────
+      - name: Verify Google Service Account
+        run: |
+          python - <<'EOF'
+          import os, json
 
-        results = service.files().list(
-            q=query,
-            fields="files(id, name, createdTime)",
-            orderBy="createdTime desc" 
-        ).execute()
+          raw = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+          if not raw.strip():
+              raise SystemExit("GOOGLE_SERVICE_ACCOUNT_JSON is empty")
 
-        files = results.get("files", [])
+          data = json.loads(raw)
 
-        if not files:
-            print("[restore] No SQLite backup found in Drive.")
-            return None
+          required = ["type", "project_id", "private_key", "client_email"]
+          missing = [k for k in required if k not in data]
 
-        latest = files[0]
-        file_id = latest["id"]
+          if missing:
+              raise SystemExit(f"Missing keys: {missing}")
 
-        print(f"[restore] Found backup: {latest['name']}")
+          print("Service account OK")
+          EOF
 
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
+      # ── CRITICAL FIX: RESTORE SQLITE ───────────────────
+      - name: Restore SQLite DB
+        run: |
+          python -u scripts/restore_sqlite.py
 
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-
-        fh.seek(0)
-
-        db_bytes = pickle.load(gzip.GzipFile(fileobj=fh))
-
-        os.makedirs(os.path.dirname(SQLITE_DB_PATH), exist_ok=True)
-
-        with open(SQLITE_DB_PATH, "wb") as f:
-            f.write(db_bytes)
-
-        print(f"[restore] SQLite restored → {SQLITE_DB_PATH}")
-        return SQLITE_DB_PATH
-
-    except Exception as e:
-        print(f"[restore] ERROR: {e}")
-        return None
-
-
-
-if __name__ == "__main__":
-    restore_sqlite()
+      # ── Run pipeline ─────────────────────────────────────
+      - name: Run Daily Pipeline
+        run: |
+          python -u scripts/run_daily_sync.py
