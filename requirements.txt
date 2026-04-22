@@ -1,10 +1,12 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Core ML - pinned to CPU build
+# Core ML
 torch==2.7.0+cpu
 sentence-transformers==3.4.1
 transformers==4.51.3
 tokenizers==0.21.0
+safetensors
+# huggingface_hub intentionally unpinned — let pip resolve between transformers + sentence-transformers
 
 # Supabase
 supabase
@@ -86,10 +88,7 @@ Pygments==2.19.2
 # Scheduling
 APScheduler==3.11.2
 
-# HuggingFace
-huggingface_hub==1.5.0
-hf-xet==1.3.2
-safetensors
+# HuggingFace (no hf-xet — optional extension, not needed in CI)
 filelock==3.18.0
 fsspec==2026.2.0
 
@@ -182,4 +181,3 @@ attrs==25.3.0
 watchdog==6.0.0
 watchfiles==1.0.4
 PyPika==0.51.1
-narwhals==2.17.0
