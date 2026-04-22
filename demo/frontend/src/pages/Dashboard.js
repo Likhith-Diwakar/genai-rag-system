@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import "../App.css";
 import "../Dashboard.css";
 
-// ✅ Single source of truth — full-featured chat (accordions, history, cache badge)
 import ChatOverlay from "../components/ChatOverlay";
 
 const BACKEND_URL =
@@ -23,7 +22,8 @@ function useDebounce(value, delay) {
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const IconSparkle = () => (
-  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style={{ width: 22, height: 22, fill: "white" }}>
+  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"
+    style={{ width: 22, height: 22, fill: "white" }}>
     <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" />
   </svg>
 );
@@ -48,12 +48,12 @@ const IconHistoryCard = () => (
 
 // ── Search Bar ────────────────────────────────────────────────────────────────
 function SearchBar() {
-  const [query, setQuery] = useState("");
+  const [query, setQuery]     = useState("");
   const [results, setResults] = useState([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen]       = useState(false);
   const [loading, setLoading] = useState(false);
-  const debouncedQuery = useDebounce(query, 300);
-  const wrapperRef = useRef(null);
+  const debouncedQuery        = useDebounce(query, 300);
+  const wrapperRef            = useRef(null);
 
   useEffect(() => {
     if (!debouncedQuery.trim()) {
@@ -74,9 +74,8 @@ function SearchBar() {
 
   useEffect(() => {
     const handler = (e) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target))
         setOpen(false);
-      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -127,8 +126,9 @@ function SearchBar() {
 }
 
 // ── Card: Latest Documents ────────────────────────────────────────────────────
+// Global — shows most recently indexed files (no session filter)
 function LatestDocumentsCard() {
-  const [docs, setDocs] = useState([]);
+  const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -142,9 +142,7 @@ function LatestDocumentsCard() {
   return (
     <div className="db-card">
       <div className="db-card-header">
-        <span className="db-card-icon">
-          <IconFolder />
-        </span>
+        <span className="db-card-icon"><IconFolder /></span>
         <div>
           <h2 className="db-card-title">Latest Documents</h2>
           <p className="db-card-subtitle">Recently indexed files</p>
@@ -155,67 +153,78 @@ function LatestDocumentsCard() {
         {!loading && docs.length === 0 && (
           <div className="db-card-empty">No documents indexed yet.</div>
         )}
-        {!loading &&
-          docs.map((doc, i) => (
-            <a
-              key={i}
-              href={
-                doc.file_id
-                  ? `https://drive.google.com/file/d/${doc.file_id}/view`
-                  : "#"
-              }
-              target="_blank"
-              rel="noopener noreferrer"
-              className="db-doc-row"
-            >
-              <span className="db-doc-row-icon">📄</span>
-              <span className="db-doc-row-name">{doc.file_name}</span>
-              <span className="db-doc-row-arrow">↗</span>
-            </a>
-          ))}
+        {!loading && docs.map((doc, i) => (
+          <a
+            key={i}
+            href={
+              doc.file_id
+                ? `https://drive.google.com/file/d/${doc.file_id}/view`
+                : "#"
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="db-doc-row"
+          >
+            <span className="db-doc-row-icon">📄</span>
+            <span className="db-doc-row-name">{doc.file_name}</span>
+            <span className="db-doc-row-arrow">↗</span>
+          </a>
+        ))}
       </div>
     </div>
   );
 }
 
 // ── Card: Frequently Visited ──────────────────────────────────────────────────
-// ✅ Reads from localStorage — updates instantly when doc is clicked in chat
-function FrequentDocsCard({ sessionId, refreshKey }) {
-  const [docs, setDocs] = useState([]);
+// Global — shows docs accessed by ALL users across ALL sessions
+// Sourced from Supabase messages table via /frequent_docs endpoint
+function FrequentDocsCard() {
+  const [docs, setDocs]       = useState([]);
+  const [loading, setLoading] = useState(true);
 
+  const fetchDocs = () => {
+    setLoading(true);
+    fetch(`${BACKEND_URL}/frequent_docs`)
+      .then((r) => r.json())
+      .then((data) =>
+        setDocs(Array.isArray(data.documents) ? data.documents : [])
+      )
+      .catch(() => setDocs([]))
+      .finally(() => setLoading(false));
+  };
+
+  // Initial load
   useEffect(() => {
-    if (!sessionId) return;
-    const storageKey = `frequent_docs_${sessionId}`;
-    try {
-      const data = JSON.parse(localStorage.getItem(storageKey) || "[]");
-      setDocs(Array.isArray(data) ? data : []);
-    } catch {
-      setDocs([]);
-    }
-  }, [sessionId, refreshKey]); // refreshKey increments on every doc_clicked event
+    fetchDocs();
+  }, []);
+
+  // Re-fetch whenever any user clicks a source doc in this tab
+  useEffect(() => {
+    const handler = () => fetchDocs();
+    window.addEventListener("doc_clicked", handler);
+    return () => window.removeEventListener("doc_clicked", handler);
+  }, []);
 
   return (
     <div className="db-card">
       <div className="db-card-header">
-        <span className="db-card-icon">
-          <IconTrending />
-        </span>
+        <span className="db-card-icon"><IconTrending /></span>
         <div>
           <h2 className="db-card-title">Frequently Visited</h2>
-          <p className="db-card-subtitle">Most accessed documents this session</p>
+          <p className="db-card-subtitle">Most accessed documents across all users</p>
         </div>
       </div>
       <div className="db-card-body">
-        {docs.length === 0 && (
+        {loading && <div className="db-card-loading">Loading…</div>}
+        {!loading && docs.length === 0 && (
           <div className="db-card-empty">
-            No activity yet — click a source document in chat to track it here.
+            No activity yet — ask a question in chat to see sources here.
           </div>
         )}
-
-        {docs.map((doc, i) => (
+        {!loading && docs.map((doc, i) => (
           <div key={i} className="db-activity-row">
             <span className="db-activity-label">
-              User ({sessionId.slice(0, 8)}) accessed:
+              USER ({(doc.session_id || "").slice(0, 8).toUpperCase()}) ACCESSED:
             </span>
             <a
               href={doc.url || "#"}
@@ -234,64 +243,65 @@ function FrequentDocsCard({ sessionId, refreshKey }) {
 }
 
 // ── Card: Recent Activity ─────────────────────────────────────────────────────
-// ✅ Accepts refreshKey — re-fetches whenever a new query is sent
-function ActivityCard({ sessionId, refreshKey }) {
+// Global — shows queries from ALL users across ALL sessions
+// Sourced from Supabase messages table via /recent_activity endpoint
+function ActivityCard() {
   const [queries, setQueries] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const fetchActivity = () => {
     setLoading(true);
-    fetch(`${BACKEND_URL}/history?session_id=${encodeURIComponent(sessionId)}`)
+    fetch(`${BACKEND_URL}/recent_activity`)
       .then((r) => r.json())
       .then((data) => {
-        const hist = data.history || {};
-        const all = [];
-        Object.values(hist)
-          .flat()
-          .forEach((msg) => all.push(msg));
-
-        // ✅ Sort latest first
-        all.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
-
-        // ✅ Keep only latest 5
-        setQueries(all.slice(0, 5));
+        const activity = Array.isArray(data.activity) ? data.activity : [];
+        setQueries(activity.slice(0, 10));
       })
       .catch(() => setQueries([]))
       .finally(() => setLoading(false));
-  }, [sessionId, refreshKey]); // ✅ refreshKey triggers re-fetch on new query
+  };
+
+  // Initial load
+  useEffect(() => {
+    fetchActivity();
+  }, []);
+
+  // Re-fetch whenever a query is sent in this browser tab
+  useEffect(() => {
+    const handler = () => fetchActivity();
+    window.addEventListener("query_sent", handler);
+    return () => window.removeEventListener("query_sent", handler);
+  }, []);
 
   return (
     <div className="db-card">
       <div className="db-card-header">
-        <span className="db-card-icon">
-          <IconHistoryCard />
-        </span>
+        <span className="db-card-icon"><IconHistoryCard /></span>
         <div>
           <h2 className="db-card-title">Recent Activity</h2>
-          <p className="db-card-subtitle">Your recent document queries</p>
+          <p className="db-card-subtitle">Latest queries across all users</p>
         </div>
       </div>
       <div className="db-card-body">
         {loading && <div className="db-card-loading">Loading…</div>}
         {!loading && queries.length === 0 && (
-          <div className="db-card-empty">No queries yet this session.</div>
+          <div className="db-card-empty">No queries yet.</div>
         )}
-        {!loading &&
-          queries.map((msg, i) => (
-            <div key={i} className="db-activity-row">
-              <span className="db-activity-label">
-                User ({msg.session_id ? msg.session_id.slice(0, 8) : sessionId.slice(0, 8)}) searched:
+        {!loading && queries.map((msg, i) => (
+          <div key={i} className="db-activity-row">
+            <span className="db-activity-label">
+              USER ({(msg.session_id || "").slice(0, 8).toUpperCase()}) SEARCHED:
+            </span>
+            <span className="db-activity-query">
+              "{msg.query?.slice(0, 72)}{msg.query?.length > 72 ? "…" : ""}"
+            </span>
+            {msg.sources?.length > 0 && (
+              <span className="db-activity-source">
+                from {msg.sources[0]?.name}
               </span>
-              <span className="db-activity-query">
-                "{msg.query?.slice(0, 72)}{msg.query?.length > 72 ? "…" : ""}"
-              </span>
-              {msg.sources?.length > 0 && (
-                <span className="db-activity-source">
-                  from {msg.sources[0]?.name}
-                </span>
-              )}
-            </div>
-          ))}
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -330,24 +340,6 @@ function DashboardNavbar({ sessionId }) {
 export default function Dashboard({ sessionId }) {
   const [chatOpen, setChatOpen] = useState(false);
 
-  // ✅ Tracks new queries → refreshes ActivityCard automatically
-  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
-
-  // ✅ Tracks doc clicks → refreshes FrequentDocsCard automatically
-  const [docRefreshKey, setDocRefreshKey] = useState(0);
-
-  useEffect(() => {
-    const handleQuerySent = () => setActivityRefreshKey((k) => k + 1);
-    window.addEventListener("query_sent", handleQuerySent);
-    return () => window.removeEventListener("query_sent", handleQuerySent);
-  }, []);
-
-  useEffect(() => {
-    const handleDocClicked = () => setDocRefreshKey((k) => k + 1);
-    window.addEventListener("doc_clicked", handleDocClicked);
-    return () => window.removeEventListener("doc_clicked", handleDocClicked);
-  }, []);
-
   return (
     <div className="db-root">
       <DashboardNavbar sessionId={sessionId} />
@@ -367,10 +359,8 @@ export default function Dashboard({ sessionId }) {
 
         <div className="db-card-grid">
           <LatestDocumentsCard />
-          {/* ✅ Reads from localStorage — updates instantly when a source is clicked */}
-          <FrequentDocsCard sessionId={sessionId} refreshKey={docRefreshKey} />
-          {/* ✅ Passes activityRefreshKey — updates instantly when a query is sent */}
-          <ActivityCard sessionId={sessionId} refreshKey={activityRefreshKey} />
+          <FrequentDocsCard />
+          <ActivityCard />
         </div>
       </main>
 
@@ -385,7 +375,7 @@ export default function Dashboard({ sessionId }) {
         </button>
       </div>
 
-      {/* ✅ Identical chat overlay as LandingPage */}
+      {/* Chat stays session-specific — sessionId still passed here */}
       <ChatOverlay
         sessionId={sessionId}
         isOpen={chatOpen}

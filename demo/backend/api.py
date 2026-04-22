@@ -2,7 +2,7 @@ import sys
 import os
 
 _backend_dir = os.path.dirname(os.path.abspath(__file__))
-_repo_root = os.path.abspath(os.path.join(_backend_dir, "..", ".."))
+_repo_root   = os.path.abspath(os.path.join(_backend_dir, "..", ".."))
 
 for _path in [_backend_dir, _repo_root]:
     if _path not in sys.path:
@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from collections import defaultdict
 
 try:
     from src.orchestration.langgraph_pipeline import run_pipeline
@@ -34,6 +33,8 @@ try:
         get_chat_history,
         check_cache,
         save_to_cache,
+        get_all_recent_activity,
+        get_all_frequent_docs,
     )
     SESSION_ENABLED = True
     print("Session manager loaded successfully")
@@ -43,10 +44,6 @@ except Exception as e:
 
 app = FastAPI()
 INITIALIZED = False
-
-# ── In-memory click store ─────────────────────────────────────────────────────
-# Structure: { session_id: [ {file_id, file_name, url}, ... ] }
-click_store: dict = defaultdict(list)
 
 app.add_middleware(
     CORSMiddleware,
@@ -89,15 +86,15 @@ def health():
 # ==================================================
 
 class QueryRequest(BaseModel):
-    query: str
+    query:      str
     session_id: Optional[str] = None
 
 
 class ClickPayload(BaseModel):
     session_id: str
-    file_id: str = ""
-    file_name: str = ""
-    url: str = ""
+    file_id:    str = ""
+    file_name:  str = ""
+    url:        str = ""
 
 
 # ==================================================
@@ -108,7 +105,7 @@ def _normalise_sources(raw_sources: list) -> list:
     for meta in raw_sources:
         if not isinstance(meta, dict):
             continue
-        name = meta.get("file_name") or meta.get("name") or ""
+        name    = meta.get("file_name") or meta.get("name") or ""
         file_id = meta.get("file_id") or ""
         if not name:
             continue
@@ -124,7 +121,7 @@ def _normalise_sources(raw_sources: list) -> list:
 @app.post("/chat")
 def chat(request: QueryRequest):
     try:
-        query_raw = request.query.strip()
+        query_raw  = request.query.strip()
         session_id = request.session_id or "anonymous"
 
         if SESSION_ENABLED:
@@ -149,9 +146,9 @@ def chat(request: QueryRequest):
                     if isinstance(sources, list) and len(sources) > 1:
                         sources = [sources[0]]
                     return {
-                        "response": cached["answer"],
-                        "sources": sources,
-                        "cache_hit": True,
+                        "response":   cached["answer"],
+                        "sources":    sources,
+                        "cache_hit":  True,
                         "session_id": session_id,
                     }
             except Exception as e:
@@ -160,14 +157,14 @@ def chat(request: QueryRequest):
         # Normal pipeline
         if run_pipeline is None:
             return {
-                "response": "Pipeline failed to load. Check backend logs.",
-                "sources": [],
-                "cache_hit": False,
+                "response":   "Pipeline failed to load. Check backend logs.",
+                "sources":    [],
+                "cache_hit":  False,
                 "session_id": session_id,
             }
 
-        result = run_pipeline(query_raw)
-        answer = None
+        result  = run_pipeline(query_raw)
+        answer  = None
         sources = []
 
         if isinstance(result, dict):
@@ -188,14 +185,14 @@ def chat(request: QueryRequest):
 
             if answer and answer.strip() == NO_ANSWER_TEXT:
                 return {
-                    "response": CUSTOM_FALLBACK,
-                    "sources": [],
-                    "cache_hit": False,
+                    "response":   CUSTOM_FALLBACK,
+                    "sources":    [],
+                    "cache_hit":  False,
                     "session_id": session_id,
                 }
 
-            raw_sources = result.get("sources", [])
-            sources = _normalise_sources(raw_sources)
+            raw_sources  = result.get("sources", [])
+            sources      = _normalise_sources(raw_sources)
             final_answer = answer or "No response generated."
 
             if SESSION_ENABLED and final_answer != "No response generated.":
@@ -206,16 +203,16 @@ def chat(request: QueryRequest):
                     print(f"Post-pipeline save warning: {e}")
 
             return {
-                "response": final_answer,
-                "sources": sources,
-                "cache_hit": False,
+                "response":   final_answer,
+                "sources":    sources,
+                "cache_hit":  False,
                 "session_id": session_id,
             }
 
         return {
-            "response": str(result),
-            "sources": [],
-            "cache_hit": False,
+            "response":   str(result),
+            "sources":    [],
+            "cache_hit":  False,
             "session_id": session_id,
         }
 
@@ -223,15 +220,16 @@ def chat(request: QueryRequest):
         import traceback
         traceback.print_exc()
         return {
-            "response": f"Backend error: {str(e)}",
-            "sources": [],
-            "cache_hit": False,
+            "response":   f"Backend error: {str(e)}",
+            "sources":    [],
+            "cache_hit":  False,
             "session_id": request.session_id or "anonymous",
         }
 
 
 # ==================================================
-# HISTORY ENDPOINT
+# HISTORY ENDPOINT  (session-specific — used by ChatOverlay)
+# GET /history?session_id=<sid>
 # ==================================================
 
 @app.get("/history")
@@ -239,8 +237,8 @@ def get_history(session_id: str):
     if not SESSION_ENABLED:
         return {
             "session_id": session_id,
-            "history": {},
-            "error": "Session storage not configured"
+            "history":    {},
+            "error":      "Session storage not configured"
         }
     try:
         history = get_chat_history(session_id)
@@ -252,24 +250,30 @@ def get_history(session_id: str):
 # ==================================================
 # TRACK CLICK ENDPOINT
 # POST /track_click
-# Called silently when user clicks a source document
+# Saves an explicit doc-open event to Supabase
+# so clicks persist across server restarts and are
+# visible globally in the Frequently Visited card.
 # ==================================================
 
 @app.post("/track_click")
 def track_click(payload: ClickPayload):
-    """
-    Tracks when a user explicitly opens a source document link.
-    Stored in-memory per session_id.
-    NOTE: Resets on server restart — use a DB for persistence.
-    """
     if not payload.session_id or not payload.file_name:
         return {"status": "ignored"}
 
-    click_store[payload.session_id].append({
-        "file_id":   payload.file_id,
-        "file_name": payload.file_name,
-        "url":       payload.url,
-    })
+    if SESSION_ENABLED:
+        try:
+            from session_manager import supabase
+            from datetime import datetime
+            supabase.table("doc_clicks").insert({
+                "session_id": payload.session_id,
+                "file_id":    payload.file_id,
+                "file_name":  payload.file_name,
+                "url":        payload.url,
+                "clicked_at": datetime.utcnow().isoformat(),
+            }).execute()
+        except Exception as e:
+            # Non-fatal — doc_clicks table may not exist yet
+            print(f"[track_click] Supabase insert warning: {e}")
 
     print(f"[track_click] session={payload.session_id} file={payload.file_name}")
     return {"status": "tracked"}
@@ -286,7 +290,6 @@ _TRACKER_DB = os.path.join(_repo_root, "data", "tracker.db")
 
 
 def _get_tracker_connection():
-    """Returns a sqlite3 connection to tracker.db, or None if unavailable."""
     if not os.path.exists(_TRACKER_DB):
         fallback = os.path.join(_backend_dir, "data", "tracker.db")
         if os.path.exists(fallback):
@@ -297,11 +300,6 @@ def _get_tracker_connection():
 
 @app.get("/search_docs")
 def search_docs(q: str = ""):
-    """
-    Search indexed documents by file name.
-    Matches file_name LIKE %q% (case-insensitive).
-    Returns: [{file_name, file_id, url}]
-    """
     if not q.strip():
         return []
 
@@ -326,7 +324,7 @@ def search_docs(q: str = ""):
         if target_table is None:
             return []
 
-        cols = [row[1] for row in cursor.execute(f"PRAGMA table_info({target_table})").fetchall()]
+        cols     = [row[1] for row in cursor.execute(f"PRAGMA table_info({target_table})").fetchall()]
         name_col = next((c for c in cols if "name" in c.lower() or "file" in c.lower()), cols[0] if cols else None)
         id_col   = next((c for c in cols if "id" in c.lower() and "file" in c.lower()), None)
         if id_col is None:
@@ -342,15 +340,11 @@ def search_docs(q: str = ""):
 
         results = []
         for row in rows:
-            row_dict = dict(row)
+            row_dict  = dict(row)
             file_name = row_dict.get(name_col, "")
             file_id   = row_dict.get(id_col, "") if id_col else ""
             url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
-            results.append({
-                "file_name": file_name,
-                "file_id":   file_id,
-                "url":       url,
-            })
+            results.append({"file_name": file_name, "file_id": file_id, "url": url})
 
         return results
 
@@ -364,15 +358,12 @@ def search_docs(q: str = ""):
 # ==================================================
 # DOCUMENTS ENDPOINT
 # GET /documents
+# Returns most recently indexed documents (global)
+# Used by Dashboard 'Latest Documents' card
 # ==================================================
 
 @app.get("/documents")
 def get_documents(limit: int = 10):
-    """
-    Returns the most recently indexed documents.
-    Used by the Dashboard 'Latest Documents' card.
-    Returns: [{file_name, file_id, url}]
-    """
     conn = _get_tracker_connection()
     if conn is None:
         return []
@@ -394,12 +385,14 @@ def get_documents(limit: int = 10):
         if target_table is None:
             return []
 
-        cols = [row[1] for row in cursor.execute(f"PRAGMA table_info({target_table})").fetchall()]
+        cols          = [row[1] for row in cursor.execute(f"PRAGMA table_info({target_table})").fetchall()]
         name_col      = next((c for c in cols if "name" in c.lower()), cols[0] if cols else None)
         id_col        = next((c for c in cols if "id" in c.lower() and "file" in c.lower()), None)
         if id_col is None:
-            id_col = next((c for c in cols if "id" in c.lower()), None)
-        timestamp_col = next((c for c in cols if any(k in c.lower() for k in ["time", "date", "created", "indexed", "modified"])), None)
+            id_col    = next((c for c in cols if "id" in c.lower()), None)
+        timestamp_col = next((c for c in cols if any(
+            k in c.lower() for k in ["time", "date", "created", "indexed", "modified"]
+        )), None)
 
         if name_col is None:
             return []
@@ -417,11 +410,7 @@ def get_documents(limit: int = 10):
             file_name = row_dict.get(name_col, "")
             file_id   = row_dict.get(id_col, "") if id_col else ""
             url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
-            results.append({
-                "file_name": file_name,
-                "file_id":   file_id,
-                "url":       url,
-            })
+            results.append({"file_name": file_name, "file_id": file_id, "url": url})
 
         return results
 
@@ -434,87 +423,37 @@ def get_documents(limit: int = 10):
 
 # ==================================================
 # FREQUENT DOCS ENDPOINT
-# GET /frequent_docs?session_id=<sid>
-# Primary:       click_store (explicit opens via /track_click)
-# Supplementary: session chat history (fallback before first click)
-# Returns top 5 sorted by click count desc
+# GET /frequent_docs
+# Global — across ALL users/sessions
+# Used by Dashboard 'Frequently Visited' card
 # ==================================================
 
 @app.get("/frequent_docs")
-def get_frequent_docs(session_id: str):
-    """
-    Returns top 5 most-accessed documents for a session.
-    Counts are driven by /track_click calls (explicit opens).
-    Chat-history sources are included with count=0 as a fallback
-    so they still appear in the dashboard before any clicks.
-    """
-    freq: dict = {}  # file_name → {count, file_id, url}
-
-    # ── Source 1: explicit clicks (primary) ──────────────────────────────────
-    for click in click_store.get(session_id, []):
-        name = click.get("file_name", "")
-        if not name:
-            continue
-        if name not in freq:
-            freq[name] = {
-                "count":   0,
-                "file_id": click.get("file_id", ""),
-                "url":     click.get("url", ""),
-            }
-        freq[name]["count"] += 1
-
-    # ── Source 2: chat history sources (supplementary, no double-count) ──────
-    if SESSION_ENABLED:
-        try:
-            history = get_chat_history(session_id)
-            for date_msgs in history.values():
-                for msg in date_msgs:
-                    sources = msg.get("sources") or []
-                    if isinstance(sources, str):
-                        import json as _json
-                        try:
-                            sources = _json.loads(sources)
-                        except Exception:
-                            sources = []
-                    for src in sources:
-                        if not isinstance(src, dict):
-                            continue
-                        name = src.get("name") or src.get("file_name") or ""
-                        if not name:
-                            continue
-                        # Only register if not already in freq (from click_store)
-                        if name not in freq:
-                            url = src.get("url") or ""
-                            file_id = ""
-                            if "/d/" in url:
-                                parts = url.split("/d/")
-                                if len(parts) > 1:
-                                    file_id = parts[1].split("/")[0]
-                            freq[name] = {
-                                "count":   0,
-                                "file_id": file_id,
-                                "url":     url,
-                            }
-        except Exception as e:
-            print(f"/frequent_docs history error: {e}")
-
-    if not freq:
+def get_frequent_docs():
+    if not SESSION_ENABLED:
+        return {"documents": []}
+    try:
+        docs = get_all_frequent_docs(limit=5)
+        return {"documents": docs}
+    except Exception as e:
+        print(f"/frequent_docs error: {e}")
         return {"documents": []}
 
-    # Sort by count desc, take top 5
-    sorted_docs = sorted(freq.items(), key=lambda x: x[1]["count"], reverse=True)[:5]
 
-    return {
-        "documents": [
-            {
-                "file_name": name,
-                "file_id":   data["file_id"],
-                "url":       data["url"] or (
-                    f"https://drive.google.com/file/d/{data['file_id']}/view"
-                    if data["file_id"] else ""
-                ),
-                "count": data["count"],
-            }
-            for name, data in sorted_docs
-        ]
-    }
+# ==================================================
+# RECENT ACTIVITY ENDPOINT
+# GET /recent_activity
+# Global — across ALL users/sessions
+# Used by Dashboard 'Recent Activity' card
+# ==================================================
+
+@app.get("/recent_activity")
+def get_recent_activity():
+    if not SESSION_ENABLED:
+        return {"activity": []}
+    try:
+        activity = get_all_recent_activity(limit=20)
+        return {"activity": activity}
+    except Exception as e:
+        print(f"/recent_activity error: {e}")
+        return {"activity": []}
