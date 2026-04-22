@@ -14,21 +14,17 @@ if PROJECT_ROOT not in sys.path:
 from src.utils.auth import get_credentials
 
 SQLITE_BACKUP_FOLDER_ID = os.getenv("SQLITE_BACKUP_FOLDER_ID")
-SQLITE_DB_PATH = os.path.join(PROJECT_ROOT, "data", "tracker.db")
+
+_data_dir = os.getenv("DATA_DIR", os.path.join(PROJECT_ROOT, "demo", "backend", "data"))
+SQLITE_DB_PATH = os.path.join(_data_dir, "tracker.db")
 
 
 def restore_sqlite_if_missing():
-    # ── ALWAYS restore from Drive backup on startup ──────────────────────
-    # Previously this skipped restore if the file existed locally, but
-    # Render creates an empty tracker.db on first boot (via TrackerDB.__init__)
-    # before this function runs — so the old check always skipped the restore.
-    # We now always overwrite with the latest Drive backup.
-    # ─────────────────────────────────────────────────────────────────────
-
     if not SQLITE_BACKUP_FOLDER_ID:
         print("[restore] SQLITE_BACKUP_FOLDER_ID not set — skipping restore.")
         return
 
+    print(f"[restore] Restoring to: {SQLITE_DB_PATH}")
     print("[restore] Downloading latest SQLite backup from Drive...")
 
     try:
@@ -68,4 +64,3 @@ def restore_sqlite_if_missing():
 
     except Exception as e:
         print(f"[restore] ERROR during restore: {e}")
-        # Non-fatal — server continues even if restore fails
