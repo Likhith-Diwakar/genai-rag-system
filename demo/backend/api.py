@@ -42,6 +42,17 @@ except Exception as e:
     SESSION_ENABLED = False
     print(f"Session manager unavailable: {e}")
 
+# ── TrackerDB (SQLite — latest_documents) ────────────────────────────────────
+try:
+    from src.storage.tracker_db import TrackerDB
+    _tracker = TrackerDB()
+    TRACKER_ENABLED = True
+    print("TrackerDB loaded successfully")
+except Exception as e:
+    _tracker = None
+    TRACKER_ENABLED = False
+    print(f"TrackerDB unavailable: {e}")
+
 app = FastAPI()
 INITIALIZED = False
 
@@ -250,9 +261,6 @@ def get_history(session_id: str):
 # ==================================================
 # TRACK CLICK ENDPOINT
 # POST /track_click
-# Saves an explicit doc-open event to Supabase
-# so clicks persist across server restarts and are
-# visible globally in the Frequently Visited card.
 # ==================================================
 
 @app.post("/track_click")
@@ -272,7 +280,6 @@ def track_click(payload: ClickPayload):
                 "clicked_at": datetime.utcnow().isoformat(),
             }).execute()
         except Exception as e:
-            # Non-fatal — doc_clicks table may not exist yet
             print(f"[track_click] Supabase insert warning: {e}")
 
     print(f"[track_click] session={payload.session_id} file={payload.file_name}")
@@ -356,76 +363,36 @@ def search_docs(q: str = ""):
 
 
 # ==================================================
-# DOCUMENTS ENDPOINT
-# GET /documents
-# Returns most recently indexed documents (global)
-# Used by Dashboard 'Latest Documents' card
+# LATEST DOCUMENTS ENDPOINT
+# GET /latest-documents
+# Global — top 5 most recently ingested files.
+# Sourced from latest_documents table in SQLite.
+# Written by ingestion pipeline (main.py).
+# No session filter — shared across all users.
 # ==================================================
 
-@app.get("/documents")
-def get_documents(limit: int = 10):
-    conn = _get_tracker_connection()
-    if conn is None:
+@app.get("/latest-documents")
+def get_latest_documents():
+    """
+    Returns the 5 most recently ingested documents globally.
+    Data is written by the ingestion pipeline (src/ingestion/main.py)
+    whenever a new file is detected from Google Drive.
+    This endpoint is session-independent — same for all users.
+    """
+    if not TRACKER_ENABLED or _tracker is None:
         return []
-
     try:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        tables = [row[0] for row in cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()]
-
-        target_table = None
-        for t in ["files", "documents", "tracker", "indexed_files"]:
-            if t in tables:
-                target_table = t
-                break
-
-        if target_table is None:
-            return []
-
-        cols          = [row[1] for row in cursor.execute(f"PRAGMA table_info({target_table})").fetchall()]
-        name_col      = next((c for c in cols if "name" in c.lower()), cols[0] if cols else None)
-        id_col        = next((c for c in cols if "id" in c.lower() and "file" in c.lower()), None)
-        if id_col is None:
-            id_col    = next((c for c in cols if "id" in c.lower()), None)
-        timestamp_col = next((c for c in cols if any(
-            k in c.lower() for k in ["time", "date", "created", "indexed", "modified"]
-        )), None)
-
-        if name_col is None:
-            return []
-
-        if timestamp_col:
-            query = f"SELECT * FROM {target_table} ORDER BY {timestamp_col} DESC LIMIT ?"
-        else:
-            query = f"SELECT * FROM {target_table} ORDER BY rowid DESC LIMIT ?"
-
-        rows = cursor.execute(query, (limit,)).fetchall()
-
-        results = []
-        for row in rows:
-            row_dict  = dict(row)
-            file_name = row_dict.get(name_col, "")
-            file_id   = row_dict.get(id_col, "") if id_col else ""
-            url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
-            results.append({"file_name": file_name, "file_id": file_id, "url": url})
-
-        return results
-
+        docs = _tracker.get_latest_documents(limit=5)
+        return docs
     except Exception as e:
-        print(f"/documents error: {e}")
+        print(f"/latest-documents error: {e}")
         return []
-    finally:
-        conn.close()
 
 
 # ==================================================
 # FREQUENT DOCS ENDPOINT
 # GET /frequent_docs
 # Global — across ALL users/sessions
-# Used by Dashboard 'Frequently Visited' card
 # ==================================================
 
 @app.get("/frequent_docs")
@@ -444,7 +411,6 @@ def get_frequent_docs():
 # RECENT ACTIVITY ENDPOINT
 # GET /recent_activity
 # Global — across ALL users/sessions
-# Used by Dashboard 'Recent Activity' card
 # ==================================================
 
 @app.get("/recent_activity")

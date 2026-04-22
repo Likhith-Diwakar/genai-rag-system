@@ -1,4 +1,4 @@
-#Main.py
+# src/ingestion/main.py
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -223,14 +223,27 @@ def main():
 
     for doc in docs:
 
-        file_id = doc["id"]
+        file_id   = doc["id"]
         file_name = doc["name"]
         mime_type = doc["mimeType"]
 
         if tracker.is_ingested(file_id):
             continue
 
-        logger.info(f"Ingesting → {file_name}")
+        logger.info(f"New file detected → {file_name}")
+
+        # ── LATEST DOCUMENTS: record this file immediately on detection ──
+        # Builds the Google Drive view URL from file_id.
+        # Inserts into latest_documents table (no-op if already present).
+        # Automatically prunes to keep only the 5 most recent entries.
+        try:
+            file_url = f"https://drive.google.com/file/d/{file_id}/view"
+            tracker.add_latest_document(file_id, file_name, file_url)
+            logger.info(f"Latest documents updated → {file_name}")
+        except Exception as e:
+            # Non-fatal — ingestion continues even if this fails
+            logger.warning(f"Failed to update latest_documents → {file_name} | {e}")
+        # ────────────────────────────────────────────────────────────────
 
         text = ""
 
@@ -293,17 +306,17 @@ def main():
 
         for i in range(len(chunks)):
             meta = {
-                "file_id": file_id,
-                "file_name": file_name,
-                "chunk_id": i,
-                "synthetic_queries": synthetic_queries_all[i] if i < len(synthetic_queries_all) else []
+                "file_id":            file_id,
+                "file_name":          file_name,
+                "chunk_id":           i,
+                "synthetic_queries":  synthetic_queries_all[i] if i < len(synthetic_queries_all) else []
             }
 
             metadatas.append(meta)
 
             local_store.append({
-                "id": ids[i],
-                "text": chunks[i],
+                "id":       ids[i],
+                "text":     chunks[i],
                 "metadata": meta
             })
 

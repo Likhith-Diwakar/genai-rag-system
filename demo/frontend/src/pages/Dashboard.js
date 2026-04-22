@@ -126,17 +126,31 @@ function SearchBar() {
 }
 
 // ── Card: Latest Documents ────────────────────────────────────────────────────
-// Global — shows most recently indexed files (no session filter)
+// Global — top 5 most recently ingested files from Google Drive.
+// Written by GitHub Actions ingestion pipeline into SQLite latest_documents table.
+// Polls every 15s so new ingestions appear automatically.
+// No session filter — same data for all users.
 function LatestDocumentsCard() {
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetch(`${BACKEND_URL}/documents`)
+  const fetchDocs = () => {
+    fetch(`${BACKEND_URL}/latest-documents`)
       .then((r) => r.json())
       .then((data) => setDocs(Array.isArray(data) ? data : []))
       .catch(() => setDocs([]))
       .finally(() => setLoading(false));
+  };
+
+  // Initial load
+  useEffect(() => {
+    fetchDocs();
+  }, []);
+
+  // Poll every 15 seconds — picks up new ingestions from GitHub Actions
+  useEffect(() => {
+    const interval = setInterval(fetchDocs, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -145,7 +159,7 @@ function LatestDocumentsCard() {
         <span className="db-card-icon"><IconFolder /></span>
         <div>
           <h2 className="db-card-title">Latest Documents</h2>
-          <p className="db-card-subtitle">Recently indexed files</p>
+          <p className="db-card-subtitle">Recently added to Google Drive</p>
         </div>
       </div>
       <div className="db-card-body">
@@ -154,21 +168,18 @@ function LatestDocumentsCard() {
           <div className="db-card-empty">No documents indexed yet.</div>
         )}
         {!loading && docs.map((doc, i) => (
-          <a
-            key={i}
-            href={
-              doc.file_id
-                ? `https://drive.google.com/file/d/${doc.file_id}/view`
-                : "#"
-            }
-            target="_blank"
-            rel="noopener noreferrer"
-            className="db-doc-row"
-          >
-            <span className="db-doc-row-icon">📄</span>
-            <span className="db-doc-row-name">{doc.file_name}</span>
-            <span className="db-doc-row-arrow">↗</span>
-          </a>
+          <div key={i} className="db-activity-row">
+            <span className="db-activity-label">ADDED:</span>
+            <a
+              href={doc.file_url || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="db-activity-query"
+              style={{ textDecoration: "underline", cursor: "pointer" }}
+            >
+              {doc.file_name}
+            </a>
+          </div>
         ))}
       </div>
     </div>
@@ -177,7 +188,6 @@ function LatestDocumentsCard() {
 
 // ── Card: Frequently Visited ──────────────────────────────────────────────────
 // Global — shows docs accessed by ALL users across ALL sessions
-// Sourced from Supabase messages table via /frequent_docs endpoint
 function FrequentDocsCard() {
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -193,12 +203,10 @@ function FrequentDocsCard() {
       .finally(() => setLoading(false));
   };
 
-  // Initial load
   useEffect(() => {
     fetchDocs();
   }, []);
 
-  // Re-fetch whenever any user clicks a source doc in this tab
   useEffect(() => {
     const handler = () => fetchDocs();
     window.addEventListener("doc_clicked", handler);
@@ -244,7 +252,6 @@ function FrequentDocsCard() {
 
 // ── Card: Recent Activity ─────────────────────────────────────────────────────
 // Global — shows queries from ALL users across ALL sessions
-// Sourced from Supabase messages table via /recent_activity endpoint
 function ActivityCard() {
   const [queries, setQueries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -261,12 +268,10 @@ function ActivityCard() {
       .finally(() => setLoading(false));
   };
 
-  // Initial load
   useEffect(() => {
     fetchActivity();
   }, []);
 
-  // Re-fetch whenever a query is sent in this browser tab
   useEffect(() => {
     const handler = () => fetchActivity();
     window.addEventListener("query_sent", handler);
@@ -375,7 +380,7 @@ export default function Dashboard({ sessionId }) {
         </button>
       </div>
 
-      {/* Chat stays session-specific — sessionId still passed here */}
+      {/* Chat stays session-specific */}
       <ChatOverlay
         sessionId={sessionId}
         isOpen={chatOpen}
