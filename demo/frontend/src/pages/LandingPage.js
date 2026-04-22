@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../App.css";
 
-// ✅ Shared chat component — same as Dashboard
+//  Shared chat component — same as Dashboard
 import ChatOverlay from "../components/ChatOverlay";
 
 // ── LandingPage ───────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ export default function LandingPage({ sessionId }) {
         </button>
       </div>
 
-      {/* ✅ Shared ChatOverlay — same component as Dashboard */}
+      {/*  Shared ChatOverlay — same component as Dashboard */}
       <ChatOverlay
         sessionId={sessionId}
         isOpen={isOpen}
