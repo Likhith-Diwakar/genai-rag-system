@@ -328,7 +328,7 @@ def track_document(payload: TrackDocumentPayload):
 
 
 # ==================================================
-# SEARCH DOCS ENDPOINT
+# SEARCH DOCS ENDPOINT (DB-based — kept as fallback)
 # GET /search_docs?q=<query>
 # ==================================================
 
@@ -346,10 +346,8 @@ def search_docs(q: str = ""):
     if not q.strip():
         return []
 
-    # ── Strategy 1: reuse existing TrackerDB connection ─────────────
     if TRACKER_ENABLED and _tracker is not None:
         try:
-            # ── CHANGED: SELECT file_url, query files table ──────────
             rows = _tracker.conn.execute(
                 """
                 SELECT file_id, file_name, file_url
@@ -362,41 +360,32 @@ def search_docs(q: str = ""):
             ).fetchall()
 
             results = []
-            # ── CHANGED: unpack file_url, use it directly ────────────
             for file_id, file_name, file_url in rows:
                 url = file_url or (
                     f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
                 )
                 results.append({"file_name": file_name, "file_id": file_id, "url": url})
 
-            print(f"[search_docs] (via TrackerDB) '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
+            print(f"[search_docs] '{q}' → {len(results)} result(s)")
             return results
 
         except Exception as e:
             print(f"[search_docs] TrackerDB query failed, falling back: {e}")
 
-    # ── Strategy 2: fresh connection ────────────────────────────────
     db_path = _get_tracker_db_path()
-    print(f"[search_docs] Opening fresh connection at: {db_path}")
-
     if not os.path.exists(db_path):
-        print(f"[search_docs] CRITICAL: tracker.db not found at {db_path}")
         return []
 
     conn = None
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-
         tables = [row[0] for row in cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()]
-
         if "files" not in tables:
-            print("[search_docs] `files` table not found")
             return []
 
-        # ── CHANGED: SELECT file_url ─────────────────────────────────
         rows = cursor.execute(
             """
             SELECT file_id, file_name, file_url
@@ -409,14 +398,12 @@ def search_docs(q: str = ""):
         ).fetchall()
 
         results = []
-        # ── CHANGED: unpack file_url, use it directly ────────────────
         for file_id, file_name, file_url in rows:
             url = file_url or (
                 f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
             )
             results.append({"file_name": file_name, "file_id": file_id, "url": url})
 
-        print(f"[search_docs] (fresh conn) '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
         return results
 
     except Exception as e:
@@ -425,6 +412,70 @@ def search_docs(q: str = ""):
     finally:
         if conn:
             conn.close()
+
+
+# ==================================================
+# SEARCH DRIVE ENDPOINT  ← NEW
+# GET /search_drive?q=<query>
+#
+# Searches Google Drive directly — no DB dependency.
+# Always up to date, works even when files table is empty.
+# ==================================================
+
+@app.get("/search_drive")
+def search_drive(q: str = ""):
+    if not q.strip():
+        return []
+
+    TARGET_FOLDER_ID = "1xs66Xr4CGmK3ikgL7xXcyDwbFfwy6NnW"
+
+    GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+    DOCX_MIME       = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    PDF_MIME        = "application/pdf"
+    CSV_MIME        = "text/csv"
+
+    try:
+        from googleapiclient.discovery import build
+        from src.utils.auth import get_credentials
+
+        creds   = get_credentials()
+        service = build("drive", "v3", credentials=creds)
+
+        safe_q = q.replace("'", "\\'")
+
+        drive_query = (
+            f"('{TARGET_FOLDER_ID}' in parents) and "
+            f"(mimeType='{GOOGLE_DOC_MIME}' "
+            f"or mimeType='{DOCX_MIME}' "
+            f"or mimeType='{PDF_MIME}' "
+            f"or mimeType='{CSV_MIME}') "
+            f"and name contains '{safe_q}' "
+            f"and trashed=false"
+        )
+
+        response = service.files().list(
+            q=drive_query,
+            fields="files(id, name, mimeType)",
+            pageSize=10,
+        ).execute()
+
+        files = response.get("files", [])
+
+        results = [
+            {
+                "file_name": f["name"],
+                "file_id":   f["id"],
+                "url":       f"https://drive.google.com/file/d/{f['id']}/view",
+            }
+            for f in files
+        ]
+
+        print(f"[search_drive] '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
+        return results
+
+    except Exception as e:
+        print(f"[search_drive] Error: {e}")
+        return []
 
 
 # ==================================================
@@ -461,7 +512,6 @@ def debug_db():
         ).fetchall()]
 
         if "files" in info["tables"]:
-            # ── CHANGED: include file_url in debug output ────────────
             rows = cursor.execute(
                 "SELECT file_id, file_name, file_url FROM files"
             ).fetchall()

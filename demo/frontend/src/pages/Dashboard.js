@@ -47,7 +47,6 @@ const IconHistoryCard = () => (
 );
 
 // ── Search Bar ────────────────────────────────────────────────────────────────
-// Receives sessionId so clicks can be tracked against the current user.
 function SearchBar({ sessionId }) {
   const [query, setQuery]     = useState("");
   const [results, setResults] = useState([]);
@@ -56,7 +55,7 @@ function SearchBar({ sessionId }) {
   const debouncedQuery        = useDebounce(query, 300);
   const wrapperRef            = useRef(null);
 
-  // Fetch suggestions whenever debounced query changes
+  // ── CHANGED: /search_docs → /search_drive ────────────────────────
   useEffect(() => {
     if (!debouncedQuery.trim()) {
       setResults([]);
@@ -64,7 +63,7 @@ function SearchBar({ sessionId }) {
       return;
     }
     setLoading(true);
-    fetch(`${BACKEND_URL}/search_docs?q=${encodeURIComponent(debouncedQuery)}`)
+    fetch(`${BACKEND_URL}/search_drive?q=${encodeURIComponent(debouncedQuery)}`)
       .then((r) => r.json())
       .then((data) => {
         setResults(data || []);
@@ -84,13 +83,9 @@ function SearchBar({ sessionId }) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // ── Handle suggestion click ──────────────────────────────────────
   const handleDocClick = (doc) => {
-    // 1. Open document in new tab
     window.open(doc.url, "_blank", "noopener,noreferrer");
 
-    // 2. POST to /track-document → writes to messages table →
-    //    get_all_frequent_docs() will count it on next poll
     fetch(`${BACKEND_URL}/track-document`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
@@ -101,12 +96,10 @@ function SearchBar({ sessionId }) {
       }),
     })
       .then(() => {
-        // 3. Fire event so FrequentDocsCard refreshes immediately
         window.dispatchEvent(new Event("doc_clicked"));
       })
       .catch((err) => console.warn("[track-document]", err));
 
-    // 4. Close and clear
     setOpen(false);
     setQuery("");
   };
@@ -126,7 +119,6 @@ function SearchBar({ sessionId }) {
         {loading && <span className="db-search-spinner" />}
       </div>
 
-      {/* Dropdown — results */}
       {open && results.length > 0 && (
         <ul className="db-search-dropdown">
           {results.map((doc, i) => (
@@ -144,7 +136,6 @@ function SearchBar({ sessionId }) {
         </ul>
       )}
 
-      {/* Dropdown — empty state */}
       {open && results.length === 0 && !loading && query.trim() && (
         <ul className="db-search-dropdown">
           <li className="db-search-no-result">No documents found for "{query}"</li>
@@ -155,8 +146,6 @@ function SearchBar({ sessionId }) {
 }
 
 // ── Card: Latest Documents ────────────────────────────────────────────────────
-// Global — top 5 most recently ingested files.
-// Polls every 15s to pick up new GitHub Actions ingestions automatically.
 function LatestDocumentsCard() {
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -210,8 +199,6 @@ function LatestDocumentsCard() {
 }
 
 // ── Card: Frequently Visited ──────────────────────────────────────────────────
-// Global — top 5 docs accessed across ALL users.
-// Refreshes immediately when SearchBar fires "doc_clicked".
 function FrequentDocsCard() {
   const [docs, setDocs]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -273,10 +260,6 @@ function FrequentDocsCard() {
 }
 
 // ── Card: Recent Activity ─────────────────────────────────────────────────────
-// Global — shows the 5 most recent REAL queries across ALL users.
-// Synthetic "[document access]" rows (from search bar clicks) are filtered out.
-// Auto-polls every 10 seconds so new queries appear without page refresh.
-// Also refreshes instantly when the "query_sent" event fires from ChatOverlay.
 function ActivityCard() {
   const [queries, setQueries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -288,9 +271,7 @@ function ActivityCard() {
       .then((data) => {
         const activity = Array.isArray(data.activity) ? data.activity : [];
         const filtered = activity
-          // Remove synthetic search-bar click rows
           .filter((m) => !m.query?.startsWith("[document access]"))
-          // Keep only the 5 most recent real queries
           .slice(0, 5);
         setQueries(filtered);
       })
@@ -298,16 +279,13 @@ function ActivityCard() {
       .finally(() => setLoading(false));
   };
 
-  // Initial load
   useEffect(() => { fetchActivity(); }, []);
 
-  // Auto-refresh every 10 seconds — new queries from any user appear automatically
   useEffect(() => {
     const interval = setInterval(fetchActivity, 10000);
     return () => clearInterval(interval);
   }, []);
 
-  // Instant refresh when ChatOverlay fires query_sent
   useEffect(() => {
     const handler = () => fetchActivity();
     window.addEventListener("query_sent", handler);
@@ -349,7 +327,6 @@ function ActivityCard() {
 }
 
 // ── Navbar ────────────────────────────────────────────────────────────────────
-// sessionId is passed to SearchBar so doc clicks are attributed correctly.
 function DashboardNavbar({ sessionId }) {
   const navigate = useNavigate();
   return (
@@ -406,7 +383,6 @@ export default function Dashboard({ sessionId }) {
         </div>
       </main>
 
-      {/* Floating chat button */}
       <div className="chat-btn-container">
         <button
           className="chat-btn"
