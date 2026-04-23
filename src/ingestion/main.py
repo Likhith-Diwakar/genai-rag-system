@@ -227,23 +227,20 @@ def main():
         file_name = doc["name"]
         mime_type = doc["mimeType"]
 
+        # ── CHANGED: build file_url once, reuse everywhere ───────────
+        file_url = f"https://drive.google.com/file/d/{file_id}/view"
+
         if tracker.is_ingested(file_id):
             continue
 
         logger.info(f"New file detected → {file_name}")
 
-        # ── LATEST DOCUMENTS: record this file immediately on detection ──
-        # Builds the Google Drive view URL from file_id.
-        # Inserts into latest_documents table (no-op if already present).
-        # Automatically prunes to keep only the 5 most recent entries.
+        # Latest Documents tracking (unchanged logic)
         try:
-            file_url = f"https://drive.google.com/file/d/{file_id}/view"
             tracker.add_latest_document(file_id, file_name, file_url)
             logger.info(f"Latest documents updated → {file_name}")
         except Exception as e:
-            # Non-fatal — ingestion continues even if this fails
             logger.warning(f"Failed to update latest_documents → {file_name} | {e}")
-        # ────────────────────────────────────────────────────────────────
 
         text = ""
 
@@ -251,7 +248,8 @@ def main():
             if mime_type == CSV_MIME:
                 parser = parser_router.route(file_name)
                 parser.parse(file_id, file_name)
-                tracker.mark_ingested(file_id, file_name)
+                # ── CHANGED: pass file_url ───────────────────────────
+                tracker.mark_ingested(file_id, file_name, file_url)
                 logger.info(f"Finished → {file_name}")
                 continue
 
@@ -269,25 +267,29 @@ def main():
                 os.unlink(temp_path)
 
             else:
-                tracker.mark_ingested(file_id, file_name)
+                # ── CHANGED: pass file_url ───────────────────────────
+                tracker.mark_ingested(file_id, file_name, file_url)
                 logger.info(f"Finished → {file_name}")
                 continue
 
         except Exception as e:
             logger.warning(f"Extraction failed → {file_name} | {e}")
-            tracker.mark_ingested(file_id, file_name)
+            # ── CHANGED: pass file_url ───────────────────────────────
+            tracker.mark_ingested(file_id, file_name, file_url)
             continue
 
         if not text or not text.strip():
             logger.warning(f"No text → {file_name}")
-            tracker.mark_ingested(file_id, file_name)
+            # ── CHANGED: pass file_url ───────────────────────────────
+            tracker.mark_ingested(file_id, file_name, file_url)
             continue
 
         chunker = chunk_router.route(mime_type)
         chunks = chunker.chunk(text)
 
         if not chunks:
-            tracker.mark_ingested(file_id, file_name)
+            # ── CHANGED: pass file_url ───────────────────────────────
+            tracker.mark_ingested(file_id, file_name, file_url)
             continue
 
         synthetic_queries_all = []
@@ -332,7 +334,8 @@ def main():
             metadatas=metadatas,
         )
 
-        tracker.mark_ingested(file_id, file_name)
+        # ── CHANGED: pass file_url ───────────────────────────────────
+        tracker.mark_ingested(file_id, file_name, file_url)
 
         logger.info(f"Finished → {file_name}")
 

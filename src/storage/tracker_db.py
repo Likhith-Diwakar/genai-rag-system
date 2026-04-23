@@ -30,21 +30,20 @@ class TrackerDB:
         self.conn.execute("PRAGMA journal_mode=WAL;")
 
         self._create_table()
+        self._migrate()  # ← NEW: handles existing DBs without file_url column
 
     def _create_table(self):
         with self._lock:
-            # Existing files tracking table
+            # ── CHANGED: added file_url column ──────────────────────────
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS files (
-                    file_id TEXT PRIMARY KEY,
-                    file_name TEXT
+                    file_id   TEXT PRIMARY KEY,
+                    file_name TEXT,
+                    file_url  TEXT
                 )
             """)
 
-            # ── Latest Documents table ───────────────────────────────────
-            # Stores the top 5 most recently ingested files globally.
-            # Used by the Dashboard 'Latest Documents' card.
-            # No session_id — global across all users.
+            # Latest Documents table (unchanged)
             self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS latest_documents (
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +55,17 @@ class TrackerDB:
             """)
 
             self.conn.commit()
+
+    # ── NEW: backward-compat migration for existing DBs ─────────────────
+    def _migrate(self):
+        """Add file_url column to files table if it doesn't exist yet."""
+        with self._lock:
+            try:
+                self.conn.execute("ALTER TABLE files ADD COLUMN file_url TEXT")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                # Column already exists — safe to ignore
+                pass
 
     # ──────────────────────────────────────────────────────────────
     # files table methods
@@ -69,11 +79,12 @@ class TrackerDB:
         )
         return cur.fetchone() is not None
 
-    def mark_ingested(self, file_id: str, file_name: str):
+    # ── CHANGED: now accepts and stores file_url ─────────────────
+    def mark_ingested(self, file_id: str, file_name: str, file_url: str = ""):
         with self._lock:
             self.conn.execute(
-                "INSERT OR IGNORE INTO files (file_id, file_name) VALUES (?, ?)",
-                (file_id, file_name)
+                "INSERT OR IGNORE INTO files (file_id, file_name, file_url) VALUES (?, ?, ?)",
+                (file_id, file_name, file_url)
             )
             self.conn.commit()
 
@@ -103,16 +114,10 @@ class TrackerDB:
         self.conn.close()
 
     # ──────────────────────────────────────────────────────────────
-    # latest_documents table methods
+    # latest_documents table methods (UNCHANGED)
     # ──────────────────────────────────────────────────────────────
 
     def add_latest_document(self, file_id: str, file_name: str, file_url: str):
-        """
-        Insert a newly ingested file into latest_documents.
-        - Skips if file_id already exists (no duplicates).
-        - After insert, keeps only the 5 most recent rows.
-        Called from ingestion pipeline (main.py) on new file detection.
-        """
         with self._lock:
             self.conn.execute(
                 """
@@ -121,8 +126,6 @@ class TrackerDB:
                 """,
                 (file_id, file_name, file_url)
             )
-
-            # Keep only the top 5 newest rows — prune the rest
             self.conn.execute(
                 """
                 DELETE FROM latest_documents
@@ -133,15 +136,9 @@ class TrackerDB:
                 )
                 """
             )
-
             self.conn.commit()
 
     def get_latest_documents(self, limit: int = 5) -> list:
-        """
-        Returns the top N most recently ingested files.
-        Each item: { file_id, file_name, file_url, ingested_at }
-        Used by /latest-documents API endpoint.
-        """
         cur = self.conn.cursor()
         cur.execute(
             """
