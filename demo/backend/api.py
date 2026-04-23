@@ -1,7 +1,5 @@
 import sys
 import os
-import sqlite3
-from pathlib import Path
 
 _backend_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root   = os.path.abspath(os.path.join(_backend_dir, "..", ".."))
@@ -27,6 +25,7 @@ except Exception as e:
     restore_sqlite_if_missing = None
     print(f"Restore import error: {e}")
 
+# ── Session manager (Supabase) ───────────────────────────────────────────────
 try:
     from session_manager import (
         get_or_create_session,
@@ -43,6 +42,7 @@ except Exception as e:
     SESSION_ENABLED = False
     print(f"Session manager unavailable: {e}")
 
+# ── TrackerDB (SQLite — latest_documents) ────────────────────────────────────
 try:
     from src.storage.tracker_db import TrackerDB
     _tracker = TrackerDB()
@@ -65,11 +65,6 @@ app.add_middleware(
 )
 
 
-def _get_tracker_db_path() -> str:
-    base = os.getenv("DATA_DIR", os.path.join(_backend_dir, "data"))
-    return str(Path(base) / "tracker.db")
-
-
 @app.on_event("startup")
 def startup_event():
     global INITIALIZED
@@ -81,24 +76,6 @@ def startup_event():
         if restore_sqlite_if_missing:
             restore_sqlite_if_missing()
             print("SQLite restored successfully")
-
-        # ── Reconnect TrackerDB after restore ────────────────────────
-        # The restore overwrites tracker.db on disk AFTER TrackerDB
-        # already opened an empty connection at import time.
-        # Close and reopen so search queries see the restored data.
-        if TRACKER_ENABLED and _tracker is not None:
-            try:
-                _tracker.conn.close()
-                _tracker.conn = sqlite3.connect(
-                    _get_tracker_db_path(),
-                    check_same_thread=False
-                )
-                _tracker.conn.execute("PRAGMA journal_mode=WAL;")
-                print(f"TrackerDB reconnected to: {_get_tracker_db_path()}")
-            except Exception as e:
-                print(f"TrackerDB reconnect warning: {e}")
-        # ─────────────────────────────────────────────────────────────
-
         INITIALIZED = True
         print("STARTUP INIT COMPLETE")
     except Exception as e:
@@ -114,6 +91,10 @@ def root():
 def health():
     return {"status": "ok"}
 
+
+# ==================================================
+# MODELS
+# ==================================================
 
 class QueryRequest(BaseModel):
     query:      str
@@ -133,6 +114,10 @@ class TrackDocumentPayload(BaseModel):
     file_url:   str
 
 
+# ==================================================
+# HELPER — return only the top (most relevant) source
+# ==================================================
+
 def _normalise_sources(raw_sources: list) -> list:
     for meta in raw_sources:
         if not isinstance(meta, dict):
@@ -146,6 +131,10 @@ def _normalise_sources(raw_sources: list) -> list:
     return []
 
 
+# ==================================================
+# CHAT ENDPOINT
+# ==================================================
+
 @app.post("/chat")
 def chat(request: QueryRequest):
     try:
@@ -158,6 +147,7 @@ def chat(request: QueryRequest):
             except Exception as e:
                 print(f"Session init warning: {e}")
 
+        # Cache lookup
         if SESSION_ENABLED:
             try:
                 cached = check_cache(session_id, query_raw)
@@ -181,6 +171,7 @@ def chat(request: QueryRequest):
             except Exception as e:
                 print(f"Cache lookup warning: {e}")
 
+        # Normal pipeline
         if run_pipeline is None:
             return {
                 "response":   "Pipeline failed to load. Check backend logs.",
@@ -253,10 +244,19 @@ def chat(request: QueryRequest):
         }
 
 
+# ==================================================
+# HISTORY ENDPOINT
+# GET /history?session_id=<sid>
+# ==================================================
+
 @app.get("/history")
 def get_history(session_id: str):
     if not SESSION_ENABLED:
-        return {"session_id": session_id, "history": {}, "error": "Session storage not configured"}
+        return {
+            "session_id": session_id,
+            "history":    {},
+            "error":      "Session storage not configured"
+        }
     try:
         history = get_chat_history(session_id)
         return {"session_id": session_id, "history": history}
@@ -264,10 +264,16 @@ def get_history(session_id: str):
         return {"session_id": session_id, "history": {}, "error": str(e)}
 
 
+# ==================================================
+# TRACK CLICK ENDPOINT
+# POST /track_click
+# ==================================================
+
 @app.post("/track_click")
 def track_click(payload: ClickPayload):
     if not payload.session_id or not payload.file_name:
         return {"status": "ignored"}
+
     if SESSION_ENABLED:
         try:
             from session_manager import supabase
@@ -281,19 +287,28 @@ def track_click(payload: ClickPayload):
             }).execute()
         except Exception as e:
             print(f"[track_click] Supabase insert warning: {e}")
+
     print(f"[track_click] session={payload.session_id} file={payload.file_name}")
     return {"status": "tracked"}
 
+
+# ==================================================
+# TRACK DOCUMENT ENDPOINT
+# POST /track-document
+# ==================================================
 
 @app.post("/track-document")
 def track_document(payload: TrackDocumentPayload):
     if not payload.session_id or not payload.file_name:
         return {"status": "ignored"}
+
     if SESSION_ENABLED:
         try:
             from session_manager import supabase
             from datetime import datetime
+
             now = datetime.utcnow()
+
             supabase.table("messages").insert({
                 "session_id": payload.session_id,
                 "query":      f"[document access] {payload.file_name}",
@@ -303,11 +318,27 @@ def track_document(payload: TrackDocumentPayload):
                 "date_key":   now.strftime("%Y-%m-%d"),
                 "query_hash": f"doc_access_{payload.file_name}_{now.timestamp()}",
             }).execute()
+
         except Exception as e:
             print(f"[track-document] Supabase insert error: {e}")
             return {"status": "error", "detail": str(e)}
+
     print(f"[track-document] session={payload.session_id} file={payload.file_name}")
     return {"status": "tracked"}
+
+
+# ==================================================
+# SEARCH DOCS ENDPOINT
+# GET /search_docs?q=<query>
+# ==================================================
+
+import sqlite3
+from pathlib import Path
+
+
+def _get_tracker_db_path() -> str:
+    base = os.getenv("DATA_DIR", "data")
+    return str(Path(base) / "tracker.db")
 
 
 @app.get("/search_docs")
@@ -315,29 +346,39 @@ def search_docs(q: str = ""):
     if not q.strip():
         return []
 
+    # ── Strategy 1: reuse existing TrackerDB connection ─────────────
     if TRACKER_ENABLED and _tracker is not None:
         try:
+            # ── CHANGED: SELECT file_url, query files table ──────────
             rows = _tracker.conn.execute(
                 """
-                SELECT file_id, file_name
+                SELECT file_id, file_name, file_url
                 FROM   files
                 WHERE  LOWER(file_name) LIKE ?
                 ORDER  BY file_name ASC
-                LIMIT  5
+                LIMIT  10
                 """,
                 (f"%{q.lower()}%",)
             ).fetchall()
+
             results = []
-            for file_id, file_name in rows:
-                url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
+            # ── CHANGED: unpack file_url, use it directly ────────────
+            for file_id, file_name, file_url in rows:
+                url = file_url or (
+                    f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
+                )
                 results.append({"file_name": file_name, "file_id": file_id, "url": url})
+
             print(f"[search_docs] (via TrackerDB) '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
             return results
+
         except Exception as e:
             print(f"[search_docs] TrackerDB query failed, falling back: {e}")
 
+    # ── Strategy 2: fresh connection ────────────────────────────────
     db_path = _get_tracker_db_path()
     print(f"[search_docs] Opening fresh connection at: {db_path}")
+
     if not os.path.exists(db_path):
         print(f"[search_docs] CRITICAL: tracker.db not found at {db_path}")
         return []
@@ -346,29 +387,38 @@ def search_docs(q: str = ""):
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+
         tables = [row[0] for row in cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()]
-        print(f"[search_docs] Tables in DB: {tables}")
+
         if "files" not in tables:
             print("[search_docs] `files` table not found")
             return []
+
+        # ── CHANGED: SELECT file_url ─────────────────────────────────
         rows = cursor.execute(
             """
-            SELECT file_id, file_name
+            SELECT file_id, file_name, file_url
             FROM   files
             WHERE  LOWER(file_name) LIKE ?
             ORDER  BY file_name ASC
-            LIMIT  5
+            LIMIT  10
             """,
             (f"%{q.lower()}%",)
         ).fetchall()
+
         results = []
-        for file_id, file_name in rows:
-            url = f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
+        # ── CHANGED: unpack file_url, use it directly ────────────────
+        for file_id, file_name, file_url in rows:
+            url = file_url or (
+                f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
+            )
             results.append({"file_name": file_name, "file_id": file_id, "url": url})
+
         print(f"[search_docs] (fresh conn) '{q}' → {len(results)} result(s): {[r['file_name'] for r in results]}")
         return results
+
     except Exception as e:
         print(f"[search_docs] Exception: {e}")
         return []
@@ -377,36 +427,60 @@ def search_docs(q: str = ""):
             conn.close()
 
 
+# ==================================================
+# DEBUG ENDPOINT
+# GET /debug-db
+# ==================================================
+
 @app.get("/debug-db")
 def debug_db():
     info = {
-        "cwd":             os.getcwd(),
-        "DATA_DIR_env":    os.getenv("DATA_DIR", "not set"),
-        "db_path":         _get_tracker_db_path(),
-        "db_exists":       os.path.exists(_get_tracker_db_path()),
-        "tracker_enabled": TRACKER_ENABLED,
-        "tables":          [],
-        "files_rows":      [],
-        "error":           None,
+        "cwd":              os.getcwd(),
+        "DATA_DIR_env":     os.getenv("DATA_DIR", "data"),
+        "db_path":          _get_tracker_db_path(),
+        "db_exists":        os.path.exists(_get_tracker_db_path()),
+        "tracker_enabled":  TRACKER_ENABLED,
+        "tables":           [],
+        "files_rows":       [],
+        "error":            None,
     }
+
     if not info["db_exists"]:
-        data_dir = os.path.dirname(_get_tracker_db_path())
-        info["data_dir_contents"] = os.listdir(data_dir) if os.path.isdir(data_dir) else "directory missing"
+        data_dir = os.getenv("DATA_DIR", "data")
+        if os.path.isdir(data_dir):
+            info["data_dir_contents"] = os.listdir(data_dir)
+        else:
+            info["data_dir_contents"] = f"directory '{data_dir}' does not exist"
         return info
+
     try:
         conn = sqlite3.connect(info["db_path"])
         cursor = conn.cursor()
-        info["tables"] = [r[0] for r in cursor.execute(
+        info["tables"] = [row[0] for row in cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()]
+
         if "files" in info["tables"]:
-            rows = cursor.execute("SELECT file_id, file_name FROM files").fetchall()
-            info["files_rows"] = [{"file_id": r[0], "file_name": r[1]} for r in rows]
+            # ── CHANGED: include file_url in debug output ────────────
+            rows = cursor.execute(
+                "SELECT file_id, file_name, file_url FROM files"
+            ).fetchall()
+            info["files_rows"] = [
+                {"file_id": r[0], "file_name": r[1], "file_url": r[2]}
+                for r in rows
+            ]
+
         conn.close()
     except Exception as e:
         info["error"] = str(e)
+
     return info
 
+
+# ==================================================
+# LATEST DOCUMENTS ENDPOINT
+# GET /latest-documents
+# ==================================================
 
 @app.get("/latest-documents")
 def get_latest_documents():
@@ -420,6 +494,11 @@ def get_latest_documents():
         return []
 
 
+# ==================================================
+# FREQUENT DOCS ENDPOINT
+# GET /frequent_docs
+# ==================================================
+
 @app.get("/frequent_docs")
 def get_frequent_docs():
     if not SESSION_ENABLED:
@@ -431,6 +510,11 @@ def get_frequent_docs():
         print(f"/frequent_docs error: {e}")
         return {"documents": []}
 
+
+# ==================================================
+# RECENT ACTIVITY ENDPOINT
+# GET /recent_activity
+# ==================================================
 
 @app.get("/recent_activity")
 def get_recent_activity():
