@@ -227,20 +227,23 @@ def main():
         file_name = doc["name"]
         mime_type = doc["mimeType"]
 
-        # ── CHANGED: build file_url once, reuse everywhere ───────────
+        # Build file_url once, reuse everywhere
         file_url = f"https://drive.google.com/file/d/{file_id}/view"
 
-        if tracker.is_ingested(file_id):
-            continue
-
-        logger.info(f"New file detected → {file_name}")
-
-        # Latest Documents tracking (unchanged logic)
+        # ── FIX: Always update latest_documents FIRST, before ingestion check ──
+        # This ensures every file discovered in Drive appears in the dashboard,
+        # regardless of whether it was previously ingested or not.
         try:
             tracker.add_latest_document(file_id, file_name, file_url)
             logger.info(f"Latest documents updated → {file_name}")
         except Exception as e:
             logger.warning(f"Failed to update latest_documents → {file_name} | {e}")
+
+        # THEN skip if already ingested — after updating latest_documents
+        if tracker.is_ingested(file_id):
+            continue
+
+        logger.info(f"New file detected → {file_name}")
 
         text = ""
 
@@ -248,7 +251,6 @@ def main():
             if mime_type == CSV_MIME:
                 parser = parser_router.route(file_name)
                 parser.parse(file_id, file_name)
-                # ── CHANGED: pass file_url ───────────────────────────
                 tracker.mark_ingested(file_id, file_name, file_url)
                 logger.info(f"Finished → {file_name}")
                 continue
@@ -267,20 +269,17 @@ def main():
                 os.unlink(temp_path)
 
             else:
-                # ── CHANGED: pass file_url ───────────────────────────
                 tracker.mark_ingested(file_id, file_name, file_url)
                 logger.info(f"Finished → {file_name}")
                 continue
 
         except Exception as e:
             logger.warning(f"Extraction failed → {file_name} | {e}")
-            # ── CHANGED: pass file_url ───────────────────────────────
             tracker.mark_ingested(file_id, file_name, file_url)
             continue
 
         if not text or not text.strip():
             logger.warning(f"No text → {file_name}")
-            # ── CHANGED: pass file_url ───────────────────────────────
             tracker.mark_ingested(file_id, file_name, file_url)
             continue
 
@@ -288,7 +287,6 @@ def main():
         chunks = chunker.chunk(text)
 
         if not chunks:
-            # ── CHANGED: pass file_url ───────────────────────────────
             tracker.mark_ingested(file_id, file_name, file_url)
             continue
 
@@ -334,7 +332,6 @@ def main():
             metadatas=metadatas,
         )
 
-        # ── CHANGED: pass file_url ───────────────────────────────────
         tracker.mark_ingested(file_id, file_name, file_url)
 
         logger.info(f"Finished → {file_name}")

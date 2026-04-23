@@ -55,7 +55,6 @@ function SearchBar({ sessionId }) {
   const debouncedQuery        = useDebounce(query, 300);
   const wrapperRef            = useRef(null);
 
-  // ── CHANGED: /search_docs → /search_drive ────────────────────────
   useEffect(() => {
     if (!debouncedQuery.trim()) {
       setResults([]);
@@ -153,7 +152,8 @@ function LatestDocumentsCard() {
   const fetchDocs = () => {
     fetch(`${BACKEND_URL}/latest-documents`)
       .then((r) => r.json())
-      .then((data) => setDocs(Array.isArray(data) ? data : []))
+      // ── FIX: Enforce max 5 documents on the frontend as well ──
+      .then((data) => setDocs(Array.isArray(data) ? data.slice(0, 5) : []))
       .catch(() => setDocs([]))
       .finally(() => setLoading(false));
   };
@@ -298,7 +298,8 @@ function ActivityCard() {
         <span className="db-card-icon"><IconHistoryCard /></span>
         <div>
           <h2 className="db-card-title">Recent Activity</h2>
-          <p className="db-card-subtitle">Latest 5 queries across all users</p>
+          {/* ── FIX: Removed "5" — now reads "Latest queries across all users" ── */}
+          <p className="db-card-subtitle">Latest queries across all users</p>
         </div>
       </div>
       <div className="db-card-body">
