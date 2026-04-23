@@ -415,32 +415,32 @@ def search_docs(q: str = ""):
 
 
 # ==================================================
-# SEARCH DRIVE ENDPOINT  ← NEW
+# SEARCH DRIVE ENDPOINT
 # GET /search_drive?q=<query>
-#
-# Searches Google Drive directly — no DB dependency.
-# Always up to date, works even when files table is empty.
 # ==================================================
+
+TARGET_FOLDER_ID = "1xs66Xr4CGmK3ikgL7xXcyDwbFfwy6NnW"
+
+GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+DOCX_MIME       = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+PDF_MIME        = "application/pdf"
+CSV_MIME        = "text/csv"
+
+
+def _get_drive_service():
+    from googleapiclient.discovery import build
+    from src.utils.auth import get_credentials
+    creds = get_credentials()
+    return build("drive", "v3", credentials=creds)
+
 
 @app.get("/search_drive")
 def search_drive(q: str = ""):
     if not q.strip():
         return []
 
-    TARGET_FOLDER_ID = "1xs66Xr4CGmK3ikgL7xXcyDwbFfwy6NnW"
-
-    GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
-    DOCX_MIME       = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    PDF_MIME        = "application/pdf"
-    CSV_MIME        = "text/csv"
-
     try:
-        from googleapiclient.discovery import build
-        from src.utils.auth import get_credentials
-
-        creds   = get_credentials()
-        service = build("drive", "v3", credentials=creds)
-
+        service = _get_drive_service()
         safe_q = q.replace("'", "\\'")
 
         drive_query = (
@@ -528,19 +528,57 @@ def debug_db():
 
 
 # ==================================================
-# LATEST DOCUMENTS ENDPOINT
+# LATEST DOCUMENTS ENDPOINT  ← NOW QUERIES GOOGLE DRIVE DIRECTLY
 # GET /latest-documents
+#
+# Returns the 5 most recently modified files from Google Drive.
+# No SQLite dependency — always live and up to date.
 # ==================================================
 
 @app.get("/latest-documents")
 def get_latest_documents():
-    if not TRACKER_ENABLED or _tracker is None:
-        return []
     try:
-        docs = _tracker.get_latest_documents(limit=5)
-        return docs
+        service = _get_drive_service()
+
+        drive_query = (
+            f"('{TARGET_FOLDER_ID}' in parents) and "
+            f"(mimeType='{GOOGLE_DOC_MIME}' "
+            f"or mimeType='{DOCX_MIME}' "
+            f"or mimeType='{PDF_MIME}' "
+            f"or mimeType='{CSV_MIME}') "
+            f"and trashed=false"
+        )
+
+        response = service.files().list(
+            q=drive_query,
+            fields="files(id, name, mimeType, modifiedTime)",
+            orderBy="modifiedTime desc",
+            pageSize=5,
+        ).execute()
+
+        files = response.get("files", [])
+
+        results = [
+            {
+                "file_name": f["name"],
+                "file_id":   f["id"],
+                "file_url":  f"https://drive.google.com/file/d/{f['id']}/view",
+                "modified":  f.get("modifiedTime", ""),
+            }
+            for f in files
+        ]
+
+        print(f"[latest-documents] Returning {len(results)} file(s) from Drive")
+        return results
+
     except Exception as e:
-        print(f"/latest-documents error: {e}")
+        print(f"[latest-documents] Drive query failed: {e}")
+        # Fallback to SQLite if Drive fails
+        if TRACKER_ENABLED and _tracker is not None:
+            try:
+                return _tracker.get_latest_documents(limit=5)
+            except Exception as ex:
+                print(f"[latest-documents] SQLite fallback also failed: {ex}")
         return []
 
 
