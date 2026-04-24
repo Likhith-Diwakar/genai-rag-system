@@ -8,7 +8,7 @@ import pytz
 # FIX PROJECT ROOT PATH
 # --------------------------------------------------
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
@@ -16,9 +16,9 @@ if PROJECT_ROOT not in sys.path:
 # IMPORT BUSINESS LOGIC
 # --------------------------------------------------
 from pipeline.ingestion.main import run_sync
-from scripts.backup_sqlite import backup_sqlite
-from scripts.backup_qdrant import backup_qdrant
-from scripts.upload_backup_to_drive import upload_backup
+from scripts.backup.backup_sqlite import backup_sqlite
+from scripts.backup.backup_qdrant import backup_qdrant
+from scripts.backup.upload_backup_to_drive import upload_backup
 
 TIMEZONE = "Asia/Kolkata"
 
