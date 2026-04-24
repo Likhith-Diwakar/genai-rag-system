@@ -807,7 +807,29 @@ CSV queries are handled deterministically via `pipeline/llm/structure.py`. Panda
 | Personalisation | Dashboard shows global shared state for all users. | Per-user preferences and personalised recommendations based on individual query history. |
 
 ---
+## Screenshots
 
+<p align="center">
+  <img src="Images/image001%20(1).png" width="700"/>
+</p>
+
+<p align="center">
+  <img src="Images/image002%20(1).png" width="700"/>
+</p>
+
+<p align="center">
+  <img src="Images/image003%20(1).png" width="700"/>
+</p>
+
+<p align="center">
+  <img src="Images/image004.png" width="700"/>
+</p>
+
+<p align="center">
+  <img src="Images/image005.png" width="700"/>
+</p>
+
+___
 ## Author
 
 Likhith Diwakar
