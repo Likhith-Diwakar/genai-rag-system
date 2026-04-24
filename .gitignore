@@ -1,30 +1,51 @@
-# Backup artifacts
+# -------------------------------
+# BACKUPS / DATA
+# -------------------------------
 backups/
+data/
+Vector/
 *.snapshot
+*.pkl
 *.pkl.gz
 *.db
-# Python cache
+
+# -------------------------------
+# PYTHON
+# -------------------------------
 __pycache__/
 *.pyc
 *.pyo
 
-# Virtual environment
+# -------------------------------
+# VENV
+# -------------------------------
 venv/
 
-# Secrets (VERY IMPORTANT)
+# -------------------------------
+# FRONTEND
+# -------------------------------
+node_modules/
+
+# -------------------------------
+# SECRETS (CRITICAL)
+# -------------------------------
 credentials.json
 token.json
 .env
 
-# Vector database / generated data
-data/
-Vector/
-
-# IDE files
+# -------------------------------
+# IDE
+# -------------------------------
 .idea/
 .vscode/
 
-# OS files
+# -------------------------------
+# OS
+# -------------------------------
 Thumbs.db
 .DS_Store
+
+# -------------------------------
+# MISC
+# -------------------------------
 .aider*

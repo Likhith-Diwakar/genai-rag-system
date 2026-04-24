@@ -1,156 +1,83 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
-# Core ML
+
+# ─────────────────────────────────────────────
+# BACKEND
+# ─────────────────────────────────────────────
+fastapi==0.115.12
+uvicorn==0.34.2
+pydantic==2.12.5
+python-dotenv==1.2.1
+httpx==0.28.1
+requests==2.32.3
+python-multipart
+
+# ─────────────────────────────────────────────
+# ML / EMBEDDINGS
+# ─────────────────────────────────────────────
 torch==2.7.0+cpu
 sentence-transformers==3.4.1
 transformers==4.51.3
 tokenizers==0.21.0
 safetensors
 # huggingface_hub intentionally unpinned — let pip resolve between transformers + sentence-transformers
-# Supabase
-supabase
-# LangGraph / LangChain
-langgraph>=0.2.0
-# LLM Providers
-openai==1.77.0
-google-generativeai==0.8.3
-google-genai
-groq==1.0.0
-# Vector DB
-qdrant-client
-# Search
-rank-bm25
-# Google Auth & APIs
-google-api-core==2.30.0
-google-api-python-client==2.190.0
-google-auth>=2.38.0
-google-auth-httplib2==0.3.0
-google-auth-oauthlib==1.3.0
-googleapis-common-protos==1.72.0
-# Web / API
-fastapi
-uvicorn==0.34.2
-httpx==0.28.1
-httpcore==1.0.9
-httptools==0.7.1
-httplib2==0.31.2
-requests==2.32.5
-requests-oauthlib==2.0.0
-websocket-client==1.9.0
-websockets>=13.0,<15.1
-h11==0.16.0
-anyio==4.12.1
-sniffio==1.3.1
-# Pydantic / Typing
-pydantic==2.12.5
-pydantic_core==2.41.5
-annotated-types==0.7.0
-typing_extensions==4.15.0
-typing-inspection==0.4.2
-# Data & ML Utils
-numpy==2.4.1
-pandas==2.3.3
-pyarrow==23.0.1
+numpy==1.26.4
 scipy
 scikit-learn
-sympy==1.14.0
-mpmath==1.3.0
-narwhals==2.17.0
-onnxruntime==1.24.2
-flatbuffers==25.12.19
-# PDF Processing
-pdfminer.six==20251230
+
+# ─────────────────────────────────────────────
+# RAG PIPELINE
+# ─────────────────────────────────────────────
+langgraph==0.4.1
+langchain-core==0.3.55
+qdrant-client==1.13.3
+rank-bm25==0.2.2
+
+# ─────────────────────────────────────────────
+# LLM PROVIDERS
+# ─────────────────────────────────────────────
+openai==1.77.0
+groq==1.0.0
+google-generativeai==0.8.3
+google-genai
+
+# ─────────────────────────────────────────────
+# GOOGLE AUTH & DRIVE API
+# ─────────────────────────────────────────────
+google-api-python-client==2.190.0
+google-auth==2.38.0
+google-auth-httplib2==0.3.0
+google-auth-oauthlib==1.3.0
+
+# ─────────────────────────────────────────────
+# PDF & DOCUMENT PARSING
+# ─────────────────────────────────────────────
 pdfplumber==0.11.9
-pdf2image==1.17.0
+pdfminer.six==20251230
 PyMuPDF==1.26.7
-pypdfium2==5.5.0
+pdf2image==1.17.0
 pytesseract==0.3.13
 python-docx==1.2.0
 pillow>=9.1,<12
-lxml==6.0.2
-# Scheduling
-APScheduler==3.11.2
-# HuggingFace (no hf-xet — optional extension, not needed in CI)
-filelock==3.18.0
-fsspec==2026.2.0
-# Logging
+
+# ─────────────────────────────────────────────
+# DATA PROCESSING
+# ─────────────────────────────────────────────
+pandas==2.2.2
+pyarrow==23.0.1
+
+# ─────────────────────────────────────────────
+# DATABASE / STORAGE
+# ─────────────────────────────────────────────
+supabase
+
+# ─────────────────────────────────────────────
+# UTILS
+# ─────────────────────────────────────────────
 loguru==0.7.3
-rich==14.3.3
-# gRPC / Protobuf
-grpcio==1.71.0
-grpcio-status==1.71.0
-proto-plus==1.27.1
-protobuf==5.29.6
-# OpenTelemetry
-opentelemetry-api==1.32.0
-opentelemetry-sdk==1.32.0
-opentelemetry-exporter-otlp-proto-common==1.32.0
-opentelemetry-exporter-otlp-proto-grpc==1.32.0
-opentelemetry-proto==1.32.0
-opentelemetry-semantic-conventions==0.53b0
-# Auth / Crypto
-cryptography==44.0.3
-bcrypt==4.3.0
-pyjwt==2.10.1
-pyasn1==0.6.2
-pyasn1_modules==0.4.2
-rsa==4.9.1
-oauthlib==3.3.1
-cffi==1.17.1
-pycparser==2.22
-# Kubernetes
-kubernetes==32.0.0
-# Schema / JSON
-jsonschema==4.23.0
-jsonschema-specifications==2024.10.1
-referencing==0.35.1
-rpds-py==0.22.3
-orjson==3.10.18
-mmh3==5.0.1
-# Git
-GitPython==3.1.44
-gitdb==4.0.12
-smmap==5.0.2
-# CLI / Build
-click==8.1.8
-typer==0.15.2
-shellingham==1.5.4
-build==1.2.2
-pyproject_hooks==1.2.0
-toml==0.10.2
-# Misc Utils
-python-dotenv==1.2.1
-tqdm==4.67.1
 tenacity>=8.0.0
-backoff==2.2.1
-distro==1.9.0
-durationpy==0.10
-packaging==24.2
-six==1.17.0
-certifi==2025.1.31
-charset-normalizer==3.4.1
-idna==3.10
-urllib3==2.3.0
-overrides==7.7.0
-posthog==3.10.0
-cachetools==5.5.2
-pybase64==1.4.0
-blinker==1.9.0
-colorama==0.4.6
+tqdm==4.67.1
 PyYAML==6.0.2
-Jinja2==3.1.5
-MarkupSafe==3.0.2
-mdurl==0.1.2
-markdown-it-py==3.0.0
-pyparsing==3.2.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
 tzdata==2025.1
-tzlocal==5.2
-importlib_metadata==8.6.1
-importlib_resources==6.5.2
-zipp==3.21.0
-attrs==25.3.0
-watchdog==6.0.0
-watchfiles==1.0.4
-PyPika==0.51.1
-Pygments==2.19.2
+certifi==2025.1.31
